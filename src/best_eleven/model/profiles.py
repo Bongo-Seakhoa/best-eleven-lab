@@ -206,7 +206,7 @@ def _rates(r: pd.Series, n: float, outs_key: str = "outs") -> dict:
 
 def scope_profiles(d: pd.DataFrame, family: str, sigma2: float, lam_bat: float, lam_bowl: float,
                    names: pd.Series, hands: pd.Series, bowler_family: pd.Series,
-                   min_balls: int) -> dict[int, dict]:
+                   min_balls: int, ids: pd.Series | None = None) -> dict[int, dict]:
     """Batting and bowling profile blocks for every qualifying player in one scope."""
     labels = PHASE_LABELS[family]
     faced = d[d["faced"] == 1]
@@ -264,7 +264,7 @@ def scope_profiles(d: pd.DataFrame, family: str, sigma2: float, lam_bat: float, 
             mb["avg"] = mb["runs"] / mb["outs"].replace(0, np.nan)
             mb["sr"] = 100 * mb["runs"] / mb["balls"]
             top = mb.sort_values("balls", ascending=False).head(14)
-            block["bowlers"] = [{"id": int(b), "name": names.get(b, ""), "balls": int(r["balls"]),
+            block["bowlers"] = [{"id": ids.get(b, "") if ids is not None else int(b), "name": names.get(b, ""), "balls": int(r["balls"]),
                                  "runs": int(r["runs"]), "outs": int(r["outs"]),
                                  "avg": _r(r["avg"]), "sr": _r(r["sr"], 1),
                                  "value": _r(100 * r["adj"] / (r["balls"] + lam_bat))} for b, r in top.iterrows()]
@@ -327,7 +327,7 @@ def scope_profiles(d: pd.DataFrame, family: str, sigma2: float, lam_bat: float, 
         if len(mb):
             mb = mb.copy()
             top = mb.sort_values("balls", ascending=False).head(14)
-            block["batters"] = [{"id": int(b), "name": names.get(b, ""), "balls": int(r["balls"]),
+            block["batters"] = [{"id": ids.get(b, "") if ids is not None else int(b), "name": names.get(b, ""), "balls": int(r["balls"]),
                                  "runs": int(r["runs"]), "wkts": int(r["wkts"]),
                                  "avg": _r(r["runs"] / r["wkts"]) if r["wkts"] else None,
                                  "econ": _r(6 * r["runs"] / r["balls"]),

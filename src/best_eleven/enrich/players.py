@@ -7,6 +7,12 @@ captains.csv or squads.csv under out_dir (historic or squad players who may have
 no Cricsheet id). Output is data/reference/players_wiki.csv with one row per
 (article, Cricsheet id); an article linked to two Cricsheet ids yields two rows.
 
+Identity: an extra title with no Wikidata/{{Cricinfo}} id may take one from the
+article's own ESPNcricinfo profile links. A cricsheet_id is left empty when the
+register's names for it cannot name the article's subject (Wikidata or register
+errors), or when one Cricsheet id would name two articles (register conflations).
+Lists and disambiguation pages reached through redirects are skipped.
+
 Conventions:
 - country, international_span and the *_cap columns list each national side in
   infobox order (country, country2, country3) separated by '; '.
@@ -19,10 +25,13 @@ Conventions:
   use while still playing for associate nations), sets retired_international and
   all three format flags. A report of coming out of retirement clears the formats
   it names, or undoes the international retirement in effect when it names none.
-  Events are ordered by the year nearest their phrase, then by article position.
-  A flag is dropped when the infobox shows an appearance in that format in a later
-  year than the retirement statement (e.g. a player who returned without the
-  article saying so).
+  Events are ordered by the year nearest their phrase (a season "2010-11" counts as
+  its end year), then by article position. Retirement from a role (captaincy,
+  umpiring), someone else's retirement ("the retirement ... of Justin Langer",
+  "Simpson ... announced that he would retire") and wishes, denials or rumours
+  are ignored. An infobox appearance in a later year than an international
+  retirement undoes it like a come-back; a format flag is likewise dropped when
+  that format was played after the statement. Evidence quotes the latest statement.
 
 Extra columns (after the specified ones):
 - death_date: ISO date from {{Death date ...}} when present.
@@ -34,7 +43,9 @@ from __future__ import annotations
 
 import json
 import re
+import unicodedata
 from datetime import date
+from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Iterable
 
@@ -62,7 +73,11 @@ COUNTRY_ALIASES = {
     "united states": "United States of America", "usa": "United States of America",
     "u.s.a.": "United States of America", "us": "United States of America",
     "uae": "United Arab Emirates", "u.a.e.": "United Arab Emirates", "holland": "Netherlands",
-    "the netherlands": "Netherlands", "png": "Papua New Guinea", "hong kong, china": "Hong Kong"}
+    "the netherlands": "Netherlands", "png": "Papua New Guinea", "hong kong, china": "Hong Kong",
+    "bharat": "India", "gujrat": "India", "gujarat": "India", "south african": "South Africa",
+    "world xi": "ICC World XI", "rest of the world xi": "ICC World XI"}
+# Case/spacing variants seen in infoboxes ("india", "srilanka") map to these spellings.
+_CANON = {re.sub(r"\s+", "", c.lower()): c for c in list(CRICKET_CODES.values()) + ["ICC World XI"]}
 MONTHS = {m: i for i, m in enumerate(
     ["january", "february", "march", "april", "may", "june", "july", "august", "september", "october",
      "november", "december"], 1)}
@@ -141,8 +156,8 @@ def _plain_date(s: str) -> str:
 
 
 def country_name(value: str | None) -> str:
-    s = _plain(value)
-    return COUNTRY_ALIASES.get(s.lower(), s)
+    s = re.sub(r"\s*\([^()]*\)$|(?<=[a-z])\d+$", "", _plain(value)).strip()  # "India(Assam)", "India1"
+    return COUNTRY_ALIASES.get(s.lower()) or _CANON.get(re.sub(r"\s+", "", s.lower()), s)
 
 
 # --------------------------------------------------------------- normalisers
@@ -188,19 +203,19 @@ def bowling(raw: str | None) -> tuple[str, str, str]:
 def role(raw: str | None) -> str:
     t = re.sub(r"\s+", " ", re.sub(r"[-–_]", " ", (raw or "").lower()))
     keep = [p for p in re.split(r"\s*(?:,|;|/|&|\band\b|\n)\s*", t)
-            if p and not re.match(r"(?:occasional|part time|sometime)\b", p)]
+            if p and not re.match(r"(?:occasional(?:ly)?|part time|sometimes?)\b", p)]
     t = " ".join(keep)
     keeper = re.search(r"wicket ?keep|\bkeeper", t)
-    bat = re.search(r"\bbat(?:ter|sman|smen|swoman|ting|s)?\b|opener", t)
+    bat = re.search(r"\bbat(?:ter|sman|smen|swoman|ting|s)?\b|\bopener\b(?! bowl)", t)
     if keeper:
         return "wicket-keeper-batter" if bat else "wicket-keeper"
-    if re.search(r"batting all ?rounder", t):
+    if re.search(r"bat(?:ting|ter|sman) all ?rounder", t):
         return "batting all-rounder"
-    if re.search(r"bowling all ?rounder", t):
+    if re.search(r"bowl(?:ing|er) all ?rounder", t):
         return "bowling all-rounder"
     if re.search(r"all ?rounder", t):
         return "all-rounder"
-    if re.search(r"\bopen(?:ing|er)\b", t):
+    if re.search(r"\bopen(?:ing|er)\b(?! bowl)", t):
         return "opening batter"
     if re.search(r"top order", t):
         return "top-order batter"
@@ -486,9 +501,16 @@ _DOMESTIC_RX = re.compile(r"first[ -]class|list a|domestic|county|franchise|\ble
                           r"\bstate\b|legends|masters|club cricket", re.I)
 _OBJ_CUT = re.compile(r",\s+(?!(?:and\s+)?(?:the\s+)?(?:tests?|odis?|t20is?|one[ -]day|twenty ?20|t20)\b)|"
                       r"\s+(?:in|on|at|after|following|before|during|with|to|while|but|because|due|so|when|"
-                      r"citing|ahead|amid|having|as|later|through|via|for|until|since|and\s+(?:he|she|they|"
-                      r"was|were|would|will|had|has|became|joined|focus\w*|continued|went|played|is|then))\b",
-                      re.I)
+                      r"citing|ahead|amid|having|as|later|through|via|for|until|since|by|"
+                      r"and\s+(?!(?:from\s+)?(?:the\s+)?(?:all\s+)?(?:tests?|odis?|t20is?|one[ -]day|twenty ?20|"
+                      r"t20|international|first|list|limited|white|domestic|county|franchise|club)\b))\b", re.I)
+# A retirement from a role rather than from playing ("retired from the Test captaincy").
+_ROLE_RX = re.compile(r"\b(?:captain\w*|vice[ -]captain\w*|leadership|umpir\w*|coach\w*|commentary|"
+                      r"administrat\w*|selector\w*|refere\w*|management|board)\b", re.I)
+# "the retirement from international cricket of fellow spinner Nicky Boje"
+_OF_SUBJECT_RX = re.compile(r"\s+of\s+(?=(?:[a-z-]+\s+){0,3}[A-Z])")
+_REPORT_RX = re.compile(r"\b(?:announc\w*|sa(?:id|ys)|stat\w*|declar\w*|confirm\w*|reveal\w*|indicat\w*|"
+                        r"told|insist\w*)\s+(?:that\s+)?$", re.I)
 _RETIRE_RX = re.compile(r"\b(?:retire[ds]?|retiring|retirement|quit(?:s|ting)?)\s+"
                         r"(?:(?:officially|formally|permanently|completely|fully|finally|also|effectively|"
                         r"immediately)\s+)?from\s+(?:playing\s+)?(?P<obj>[^.;:!?]{1,120})", re.I)
@@ -498,8 +520,9 @@ _RETIRE_POSS_RX = re.compile(r"\b(?:his|her|their)\s+(?P<obj>(?:test|odi|t20i|in
 _CALLED_RX = re.compile(r"\bcalled\s+time\s+on\s+(?:his|her|their)\s+(?P<obj>[^.;:!?]{1,60}?)\s+career\b", re.I)
 _UNRETIRE_RX = re.compile(
     r"\b(?:(?:came|come|comes|coming)\s+(?:back\s+)?out\s+of\s+(?:(?:his|her|their)\s+)?(?:[\w-]+\s+){0,3}?"
-    r"retirement|revers(?:ed|es|ing)\s+(?:his|her|their)\s+(?:(?:[\w-]+\s+){0,3}?retirement|decision\s+to\s+"
-    r"retire|earlier\s+decision\s+to\s+retire)|(?:rescind|withdr[ae]w|withdrawn|withdrawing|overturn|revok)\w*\s+"
+    r"retirement|revers(?:ed|es|ing)\s+(?:his|her|their|an?|the)\s+(?:(?:[\w-]+\s+){0,3}?retirement|"
+    r"(?:(?:earlier|initial|previous|original)\s+)?decision\s+to\s+retire)|"
+    r"(?:rescind|withdr[ae]w|withdrawn|withdrawing|overturn|revok)\w*\s+"
     r"(?!from\b)(?:(?:his|her|their|my|the)\s+)?(?:earlier\s+|previous\s+)?(?:(?:[\w-]+\s+){0,3}?retirement|decision\s+to\s+"
     r"retire)|u-?turn\s+on\s+"
     r"(?:his|her|their)\s+(?:[\w-]+\s+){0,3}?retirement|return(?:ed|s|ing)?\s+from\s+(?:(?:his|her|their)\s+)?"
@@ -508,8 +531,21 @@ _NEG_RX = re.compile(r"\b(?:not|never|no|rumou?rs?|speculat\w*|consider\w*|conte
                      r"rul(?:ed|ing|es)\s+out|refus\w*|hint\w*|postpon\w*|delay\w*|reconsider\w*|urg\w*|"
                      r"persuad\w*|convinc\w*|threat\w*|nearly|almost|likely|might|could|possib\w*|if|"
                      r"whether|plan(?:s|ned|ning)?\s+to|intend\w*|expected|set\s+to|reportedly|asked|"
-                     r"pressure|calls?\s+for|temporar\w*|(?-i:may))\b|n't\b", re.I)
-_YEAR_RX = re.compile(r"\b(1[89]\d\d|20\d\d)\b")
+                     r"pressure|calls?\s+for|temporar\w*|wish\w*|want\w*|desir\w*|hop(?:e|ed|es|ing)|keen|"
+                     r"(?-i:may))\b|n't\b", re.I)
+_DENIED_RX = re.compile(r"\b(?:den(?:y|ied|ies)|speculation|rumou?rs?|later\s+revers\w*|did\s+not)\b", re.I)
+# A year, or a season/span whose end year is taken ("2010-11", "1999-2003").
+_YEAR_RX = re.compile(r"\b(1[89]\d\d|20\d\d)(?:\s*[-/]\s*(\d{4}|\d{2})(?!\d))?\b")
+_SPAN_START_RX = re.compile(r"^\s*(?:-|until|till|to|through)\b")
+
+
+def _year_of(m: re.Match) -> int:
+    y, end = m.group(1), m.group(2)
+    if end:
+        e = int(y[:2] + end) if len(end) == 2 else int(end)
+        if int(y) < e <= int(y) + 30:
+            return e
+    return int(y)
 
 _SELF = {"he", "she", "they", "i"}
 _POSS = {"his", "her", "their", "my"}
@@ -583,11 +619,40 @@ def _run_is_self(toks: list[str], i: int, step: int, names: set[str]) -> bool:
     return any(p and all(t in names for t in p) for p in persons)
 
 
+def _reporter(toks: list[str], i: int, names: set[str]) -> bool | None:
+    """For a pronoun at toks[i] in reported speech ("Simpson ... announced that he"),
+    whether the reporting subject is the player; None when it is not reported speech."""
+    j = i - 1
+    if j >= 0 and toks[j].lower() == "that":
+        j -= 1
+    if j < 0 or not _REPORT_RX.search(toks[j] + " "):
+        return None
+    group = toks[i].lower() == "they"  # "He along with Sangakkara announced that they would retire"
+    seen = None
+    for k in range(j - 1, max(j - 7, -1), -1):
+        tl = toks[k].lower()
+        if tl in _SELF:
+            return True
+        if tl in _RELATIVES:
+            return False if not group else seen
+        if _name_like(toks[k]):
+            if _run_is_self(toks, k, -1, names):
+                return True
+            if not group:
+                return False
+            seen = False
+    return seen
+
+
 def _decide(toks: list[str], names: set[str], backward: bool) -> bool | None:
     rng = range(len(toks) - 1, -1, -1) if backward else range(len(toks))
     for i in rng:
         tl = toks[i].lower()
         if tl in _SELF:
+            if backward:
+                rep = _reporter(toks, i, names)
+                if rep is not None:
+                    return rep
             return True
         if tl in _RELATIVES:
             return False
@@ -682,15 +747,30 @@ def retirement_events(sentences: list[str], names: set[str]) -> list[tuple]:
                 cut = _OBJ_CUT.search(obj)
                 if cut:
                     obj = obj[:cut.start()]
+                subject = None
+                of = _OF_SUBJECT_RX.search(obj)
+                if of and rx is _RETIRE_RX:  # "retirement from X of <someone>"
+                    subject = _decide(_tokens(obj[of.end():]), names, backward=False)
+                    obj = obj[:of.start()]
+                role = _ROLE_RX.search(obj)
+                if role:  # "retired from the captaincy and from Test cricket" keeps only the playing part
+                    rest = re.match(r"\s*(?:,\s*)?and\s+(?:from\s+)?(.*)", obj[role.end():])
+                    if not rest:
+                        continue
+                    obj = rest.group(1)
                 fm = _formats(obj)
                 if not fm or _NEG_RX.search(_clause_before(sent, m.start()) + " " + sent[m.start():m.start("obj")]):
                     continue
-                end = m.start("obj") + len(obj)
+                end = m.start("obj") + (cut.start() if cut else len(m.group("obj"))) if rx is _RETIRE_RX else m.end()
+                if _DENIED_RX.search(sent[end:end + 80]):
+                    continue
                 if "all" in fm:  # all cricket, unless restricted to one country or still playing internationally
                     if _RESTRICTED_RX.match(sent[end:]) or _CONTINUES_RX.search(sent[end:]):
                         continue
                     fm = {"international"}
-                if _is_self(sent[:m.start()], sent[end:], names, poss=poss):
+                if subject is False:
+                    continue
+                if subject or _is_self(sent[:m.start()], sent[end:], names, poss=poss):
                     found.append((m.start(), end, "re", fm))
                     last_re = idx
         found.sort(key=lambda f: f[0])
@@ -698,16 +778,18 @@ def retirement_events(sentences: list[str], names: set[str]) -> list[tuple]:
         for k, (pos, end, kind, fm) in enumerate(found):
             nxt = found[k + 1][0] if k + 1 < len(found) else len(sent)
             after = _YEAR_RX.search(sent, end, nxt) if end < nxt else None
-            before = list(_YEAR_RX.finditer(sent, 0, pos))[-1:] if k == 0 else []
+            # a lead-in year that opens a span ("from 2021 until his retirement") is not the event date
+            before = [y for y in _YEAR_RX.finditer(sent, 0, pos)
+                      if not _SPAN_START_RX.match(sent[y.end():])][-1:] if k == 0 else []
             # nearest year: a lead-in date ("On 8 May 2024, ...") or one following the matched phrase
             if before and (not after or pos - before[0].end() <= after.start() - end):
-                year = int(before[0].group(1))
+                year = _year_of(before[0])
             elif after:
-                year = int(after.group(1))
+                year = _year_of(after)
             events.append((year, len(events), kind, fm, sent, pos))
-        ys = _YEAR_RX.findall(sent)
+        ys = list(_YEAR_RX.finditer(sent))
         if ys:
-            carry = int(ys[-1])
+            carry = _year_of(ys[-1])
     return events
 
 
@@ -729,8 +811,8 @@ def detect_retirement(text: str | None, names: Iterable[str],
             if "international" in fm and not state["international"]:
                 before_intl = dict(state)
             for f in (keys if "international" in fm else fm):
-                old = state[f]
-                state[f] = (old[0], old[1], max(old[2] or 0, y or 0) or None) if old else (sent, pos, y)
+                old = state[f]  # evidence is the latest statement; its year never moves backwards
+                state[f] = (sent, pos, y or (old[2] if old else None))
         elif fm == {"international"}:
             if state["international"]:
                 state = dict(before_intl or dict.fromkeys(keys))
@@ -738,18 +820,30 @@ def detect_retirement(text: str | None, names: Iterable[str],
             for f in fm | {"international"}:
                 state[f] = None
     last = {k: int(v) for k, v in (last_years or {}).items() if str(v).isdigit()}
+    # a later appearance undoes an international retirement like an unreported come-back
+    if state["international"] and state["international"][2] and \
+            any(v > state["international"][2] for v in last.values()):
+        state = dict(before_intl or dict.fromkeys(keys))
     for f in ("test", "odi", "t20i"):
         if state[f] and state[f][2] and last.get(f, 0) > state[f][2]:
             state[f] = None
-    if state["international"] and state["international"][2] and \
-            any(v > state["international"][2] for v in last.values()):
-        state["international"] = None
     out = {f"retired_{k}": "1" if state[k] else "" for k in keys}
     out["retirement_evidence"] = _evidence([state[k][:2] for k in keys if state[k]])
     return out
 
 
 # ------------------------------------------------------------------- parse
+def lead_names(text: str | None) -> list[str]:
+    """Bold names in the lead paragraph (full names and aliases such as 'Riyad')."""
+    lead = re.split(r"\n==", _without_refs(text or ""), maxsplit=1)[0]
+    for _ in range(6):  # innermost templates first, so the infobox goes too
+        lead, n = re.subn(r"\{\{[^{}]*\}\}", "", lead)
+        if not n:
+            break
+    out = [strip_markup(n) for n in re.findall(r"'''(.+?)'''", lead)[:4]]
+    return [n for n in out if n and len(n) <= 80]
+
+
 def parse_player(text: str | None, title: str = "") -> dict[str, str]:
     """All article-derived columns for one player page."""
     ib = cricketer_infobox(text)
@@ -770,7 +864,7 @@ def parse_player(text: str | None, title: str = "") -> dict[str, str]:
     row["stats_as_of"] = _plain(f"{ib.get('date', '')} {ib.get('year', '')}")
     stats = career(ib, female)
     row["career_json"] = json.dumps(stats, ensure_ascii=False) if stats else ""
-    row.update(detect_retirement(text, [title, row["full_name"], _plain(ib.get("name"))],
+    row.update(detect_retirement(text, [title, row["full_name"], _plain(ib.get("name"))] + lead_names(text),
                                  {f: row[f"last_{f}_year"] for f in ("test", "odi", "t20i")}))
     row["death_date"] = parse_date(ib.get("death_date"), "death")
     row["gender"] = gender(ib, text or "")
@@ -816,14 +910,115 @@ def _is_disambiguation(text: str) -> bool:
                           r"set index)", text, re.I))
 
 
+def _not_biography(page: dict) -> bool:
+    """Disambiguation pages and lists that a player title redirects to."""
+    return _is_disambiguation(page["text"]) or page["title"].lower().startswith("list of ")
+
+
+# --------------------------------------------------------------- identity
+_PROFILE_RX = re.compile(r"espncricinfo\.com/(?:cricketers/[a-z0-9-]*?-|(?:[a-z]+/)*content/player/|player/)"
+                         r"(\d{3,8})\b", re.I)
+
+
+_NAME_FORMS = {"mohd": "mohammad", "md": "mohammad", "muhammad": "mohammad", "mohammed": "mohammad",
+               "mohamed": "mohammad", "muhammed": "mohammad"}
+_HONORIFICS = {"nawab", "yuvraj", "maharaja", "maharajkumar", "raja", "prince", "sir", "lord"}
+
+
+def _fold_tokens(name: str | None) -> list[str]:
+    s = re.sub(r"\s*\([^)]*\)\s*$", "", name or "")
+    s = unicodedata.normalize("NFKD", s).encode("ascii", "ignore").decode().lower()
+    return [_NAME_FORMS.get(t, t) for t in re.findall(r"[a-z]+", re.sub(r"['’`]", "", s))]
+
+
+def _similar(a: str, b: str) -> bool:
+    return a == b or (min(len(a), len(b)) >= 4 and SequenceMatcher(None, a, b).ratio() >= 0.75)
+
+
+def same_person(article_names: Iterable[str], register_names: Iterable[str]) -> bool:
+    """Loose check that a register name ('LJ Woodcock', 'Ahmed Shehzad') can name the
+    article's subject, allowing transliteration variants, initials in any order
+    ('HHC Gunaratne' for Chandima Gunaratne) and changed surnames when the initials
+    of the article's full name match ('LK Newton' for Laura Kelly MacLeod)."""
+    arts = [t for t in (_fold_tokens(n) for n in article_names) if t]
+    if not arts:
+        return True
+    tokens = {t for a in arts for t in a}
+    joined = {"".join(a) for a in arts}
+    for reg in register_names:
+        raw = (reg or "").split()
+        rt = _fold_tokens(reg)
+        if not rt:
+            continue
+        initials = raw[0].lower() if len(raw) > 1 and raw[0].isalpha() and raw[0].isupper() and len(raw[0]) <= 7 else ""
+        words = rt[1:] if initials else rt
+        matched = [w for w in words if any(_similar(w, t) for t in tokens)
+                   or (len(w) > 3 and any(w in j for j in joined))]
+        # first letters of the article's other names ("Hiri Hiri" keeps one "hiri")
+        others = {t[0] for a in arts for t in (a[:-1] if matched and _similar(matched[-1], a[-1]) else
+                                               [t for t in a if not any(_similar(w, t) for w in matched)])}
+        if len(matched) >= 2 or (len(matched) == len(words) == 1 and (not initials or set(initials) & others)):
+            return True
+        if matched and initials and set(initials) & others:
+            return True
+        if words[0] in _HONORIFICS and words[-1] in tokens:  # "Nawab of Pataudi"
+            return True
+        if len(words) > 1 and any(SequenceMatcher(None, "".join(words), j).ratio() >= 0.75 for j in joined):
+            return True
+        if len(initials) > 1 and any(initials in ("".join(t[0] for t in a[:-1]), "".join(t[0] for t in a))
+                                     for a in arts if len(a) > 1):
+            return True
+    return False
+
+
+def profile_cricsheet_id(text: str | None, names: list[str], by_cricinfo: dict[int, str],
+                         register_names: dict[str, list[str]]) -> tuple[int, str] | None:
+    """(cricinfo id, Cricsheet id) from the article's own ESPNcricinfo profile links when
+    neither Wikidata nor a {{Cricinfo}} template gives one. Profiles of relatives or
+    team-mates are rejected by the name check; more than one survivor is ambiguous."""
+    hits = {}
+    for ci in dict.fromkeys(int(i) for i in _PROFILE_RX.findall(text or "")):
+        ident = by_cricinfo.get(ci)
+        if ident and same_person(names, register_names.get(ident, [])):
+            hits.setdefault(ident, ci)
+    if len(hits) == 1:
+        ident, ci = next(iter(hits.items()))
+        return ci, ident
+    return None
+
+
+def _article_names(title: str, text: str | None, info: dict) -> list[str]:
+    return [title, info.get("full_name", ""), _plain(cricketer_infobox(text).get("name"))] + lead_names(text)
+
+
+def register_names(people_csv: str | Path, warehouse: str | Path) -> dict[str, list[str]]:
+    """Cricsheet id -> names it is known by (register name, unique name, warehouse name)."""
+    people = pd.read_csv(people_csv, dtype=str, usecols=lambda c: c in ("identifier", "name", "unique_name"))
+    out: dict[str, list[str]] = {}
+    for col in ("name", "unique_name"):
+        if col in people:
+            for ident, n in zip(people["identifier"], people[col]):
+                if isinstance(n, str):
+                    out.setdefault(ident, []).append(n)
+    p = Path(warehouse) / "players.parquet"
+    if p.exists():
+        wh = pd.read_parquet(p, columns=["id", "name"])
+        for ident, n in zip(wh["id"], wh["name"]):
+            if isinstance(n, str):
+                out.setdefault(ident, []).append(n)
+    return out
+
+
 def run(wiki: Wiki, resolver: Resolver, out_dir: str | Path = "data/reference",
-        extra_titles: Iterable[str] | None = None, *, warehouse: str | Path = "data/warehouse") -> dict:
+        extra_titles: Iterable[str] | None = None, *, warehouse: str | Path = "data/warehouse",
+        people_csv: str | Path = "data/raw/people.csv") -> dict:
     out_dir = Path(out_dir)
     cands = candidates(resolver, warehouse)
     extra = list(dict.fromkeys(list(extra_titles or []) + reference_titles(out_dir)))
     titles = list(dict.fromkeys(list(cands["title"]) + extra))
     pages = resolver.resolve_pages(fetch(wiki, titles))
     missing = sorted(t for t in titles if pages[t]["text"] is None)
+    reg_names = register_names(people_csv, warehouse)
     parsed: dict[str, dict] = {}
 
     def parsed_for(page: dict) -> dict:
@@ -831,7 +1026,7 @@ def run(wiki: Wiki, resolver: Resolver, out_dir: str | Path = "data/reference",
             parsed[page["title"]] = parse_player(page["text"], page["title"])
         return parsed[page["title"]]
 
-    rows, mismatch, covered = [], [], set()
+    rows, mismatch, covered, not_bio = [], [], set(), []
     for c in cands.itertuples(index=False):
         page = pages[c.title]
         if page["text"] is None:
@@ -839,22 +1034,46 @@ def run(wiki: Wiki, resolver: Resolver, out_dir: str | Path = "data/reference",
         if page["qid"] and page["qid"] != c.qid:
             mismatch.append(c.title)
             continue
+        if _not_biography(page):
+            not_bio.append(c.title)
+            continue
         covered.add(page["title"])
         rows.append({"wikipedia_title": page["title"], "revid": page["revid"], "qid": c.qid,
                      "cricinfo_id": c.cricinfo, "cricsheet_id": c.cricsheet_id, **parsed_for(page)})
-    skipped_extra = []
+    skipped_extra, from_profile = [], []
     for t in extra:
         page = pages[t]
         if page["text"] is None or page["title"] in covered:
             continue
         info = parsed_for(page)
-        if _is_disambiguation(page["text"]) or (info["has_infobox"] == "0" and not page["cricinfo"]):
+        if _not_biography(page) or (info["has_infobox"] == "0" and not page["cricinfo"]):
             skipped_extra.append(t)
             continue
+        cricinfo, cricsheet = page["cricinfo"], page["cricsheet_id"]
+        if not cricinfo:  # no Wikidata id and no {{Cricinfo}}: try the article's own profile links
+            hit = profile_cricsheet_id(page["text"], _article_names(page["title"], page["text"], info),
+                                       resolver.by_cricinfo, reg_names)
+            if hit:
+                cricinfo, cricsheet = hit
+                from_profile.append(page["title"])
         covered.add(page["title"])
         rows.append({"wikipedia_title": page["title"], "revid": page["revid"], "qid": page["qid"] or "",
-                     "cricinfo_id": page["cricinfo"] or "", "cricsheet_id": page["cricsheet_id"] or "",
-                     **info})
+                     "cricinfo_id": cricinfo or "", "cricsheet_id": cricsheet or "", **info})
+
+    # identity guards: the register name must fit the article, and one Cricsheet id names one article
+    texts = {v["title"]: v["text"] for v in pages.values() if v["text"] is not None}
+    name_rejected, shared = [], []
+    for r in rows:
+        title = r["wikipedia_title"]
+        if r["cricsheet_id"] and not same_person(_article_names(title, texts[title], r),
+                                                 reg_names.get(r["cricsheet_id"], [])):
+            name_rejected.append(r["wikipedia_title"])
+            r["cricsheet_id"] = ""
+    counts = pd.Series([r["cricsheet_id"] for r in rows if r["cricsheet_id"]], dtype=str).value_counts()
+    for r in rows:
+        if r["cricsheet_id"] and counts.get(r["cricsheet_id"], 0) > 1:
+            shared.append(r["wikipedia_title"])
+            r["cricsheet_id"] = ""
 
     df = pd.DataFrame(rows, columns=COLUMNS + EXTRA_COLUMNS).fillna("")
     for col in ("revid", "cricinfo_id"):
@@ -866,7 +1085,9 @@ def run(wiki: Wiki, resolver: Resolver, out_dir: str | Path = "data/reference",
     filled = lambda c: int((df[c] != "").sum())
     return {"candidates": len(cands), "extra_titles": len(extra), "titles_requested": len(titles),
             "fetched": len(titles) - len(missing), "missing": missing, "qid_mismatch": mismatch,
-            "extra_skipped": skipped_extra, "rows": len(df), "articles": df["wikipedia_title"].nunique(),
+            "not_biography": not_bio, "extra_skipped": skipped_extra, "ids_from_profile_links": from_profile,
+            "ids_dropped_name_mismatch": name_rejected, "ids_dropped_shared": shared,
+            "rows": len(df), "articles": df["wikipedia_title"].nunique(),
             "infobox_found": int((df["has_infobox"] == "1").sum()), "birth_date_filled": filled("birth_date"),
             "hand_filled": filled("batting_hand"), "bowling_class_filled": filled("bowling_class"),
             "bowling_family_filled": filled("bowling_family"), "role_filled": filled("role"),

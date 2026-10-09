@@ -15,6 +15,7 @@ import pandas as pd
 
 from .model.frames import Warehouse
 from .model.playerdb import INTL_SCOPES, PACE, SPIN, build_player_db, scope_flags
+from .model.values import FULL_MEMBERS
 
 SCOPE_LABELS = {"men-test": "Men's Tests", "men-odi": "Men's ODIs", "men-t20i": "Men's T20Is",
                 "women-test": "Women's Tests", "women-odi": "Women's ODIs", "women-t20i": "Women's T20Is"}
@@ -49,7 +50,8 @@ def scope_meta(scope: str, wh: Warehouse, leagues: dict, groups: dict) -> dict:
         gender, fmt, tier, label = lg["gender"], "T20" if fam != "hundred" else "Hundred", "league", lg["label"]
         group = "men-club" if gender == "male" else "women-club"
         extra = {"short": lg["short"], "host": lg["host"], "featured": lg["featured"],
-                 "maxOverseas": lg.get("max_overseas"), "overseasSource": lg.get("overseas_source", "")}
+                 "maxOverseas": lg.get("max_overseas"), "overseasSource": lg.get("overseas_source", ""),
+                 "overseasNote": lg.get("overseas_note", "")}
     g = groups.get(group, {})
     return {"key": scope, "label": label, "tier": tier, "gender": gender, "format": fmt, "family": fam,
             "years": [int(m["year"].min()), int(m["year"].max())], "matches": int(len(m)),
@@ -93,7 +95,6 @@ def export_scope(scope: str, seasons: pd.DataFrame, ctx: dict, meta: dict, out: 
         P["capt"] = flags["capt"].astype(int).tolist()
         P["vc"] = flags["vc"].astype(int).tolist()
     has_squads = bool(flags["squad"].sum())
-    from .model.values import FULL_MEMBERS
     full = [int(t in FULL_MEMBERS) if scope in INTL_SCOPES else 1 for t in teams]
     doc = {**meta, "teams": teams, "teamsFull": full, "players": P, "seasons": cols,
            "availability": {"squads": has_squads, "leadership": "capt" in P}}
@@ -138,6 +139,8 @@ def build_site_data(warehouse: str | Path, model_dir: str | Path, reference: str
                              for k, v in summary["groups"].items()},
                   "testWicketValue": summary["test_wicket_value"]},
     }
+    meta["historic"] = build_historic(Path(reference), out, log=log)
+    meta["captains"] = build_captains(Path(reference), out)
     if profiles:
         meta["profiles"] = build_profiles(ctx, model_dir, out, metas, flags_by_scope, summary, inferred, log=log)
     dump(meta, out / "meta.json")
@@ -169,7 +172,7 @@ def build_profiles(ctx: dict, model_dir: Path, out: Path, metas: dict, flags_by_
         sigma2 = g.get("sigma2", 6.0)
         d = load_scope(model_dir / "values", scope, keepers, group, fam, hand)
         prof = scope_profiles(d, family, sigma2, meta["lambda"]["bat"], meta["lambda"]["bowl"], names, hand,
-                              fam, PROFILE_MIN_BALLS[family])
+                              fam, PROFILE_MIN_BALLS[family], ids=db["id"])
         del d
         seasons = pd.read_parquet(model_dir / "seasons" / f"{scope}.parquet")
         trend = season_trend(seasons, meta["lambda"]["bat"], meta["lambda"]["bowl"])
@@ -226,3 +229,90 @@ def build_profiles(ctx: dict, model_dir: Path, out: Path, metas: dict, flags_by_
                       "s": list(by_scope), "a": active.get(p, [])})
     dump(index, pdir / "index.json")
     return {"players": len(index), "bytes": total}
+
+
+# ------------------------------------------------------------------ all eras
+def _num(series: pd.Series) -> pd.Series:
+    return pd.to_numeric(series.astype(str).str.replace(",", "").str.replace("*", ""), errors="coerce")
+
+
+def build_historic(reference: Path, out: Path, *, log=print) -> list[dict]:
+    """Career-record pools for an all-eras XI (Tests and ODIs), from Wikipedia's
+    national player lists. Era baselines are computed from the lists themselves:
+    each career is assigned to the decade of its midpoint."""
+    path = reference / "careers_lists.csv"
+    if not path.exists():
+        return []
+    c = pd.read_csv(path, dtype=str, keep_default_na=False)
+    wiki = _read_csv(reference / "players_wiki.csv")
+    caps = _read_csv(reference / "captain_totals.csv")
+    files = []
+    for (gender, fmt), d in c[c["format"].isin(["Test", "ODI"])].groupby(["gender", "format"]):
+        d = d.copy()
+        for col in ("matches", "runs", "bat_avg", "wickets", "bowl_avg", "runs_conceded", "balls_bowled",
+                    "catches", "stumpings", "hundreds", "fifties", "innings", "not_outs", "first_year", "last_year"):
+            d[col] = _num(d[col])
+        open_ = d["career_open"] == "1" if "career_open" in d else pd.Series(False, index=d.index)
+        d["last_year"] = d["last_year"].where(~open_, float(d["last_year"].max()))
+        outs = (d["runs"] / d["bat_avg"]).round()
+        outs = outs.fillna(d["innings"] - d["not_outs"]).fillna(0)
+        d["outs"] = np.where(d["runs"].fillna(0) == 0, 0, outs)
+        d["rc"] = d["runs_conceded"].fillna(d["bowl_avg"] * d["wickets"])
+        d["mid"] = ((d["first_year"] + d["last_year"].fillna(d["first_year"])) / 2 // 10 * 10).astype("Int64")
+        base = d.groupby("mid").agg(r=("runs", "sum"), o=("outs", "sum"), rc=("rc", "sum"), w=("wickets", "sum"))
+        base["bat"] = base["r"] / base["o"].clip(lower=1)
+        base["bowl"] = base["rc"] / base["w"].clip(lower=1)
+        if wiki is not None:
+            w = wiki.drop_duplicates("wikipedia_title").set_index("wikipedia_title")
+            d = d.join(w[["batting_hand", "bowling_class", "bowling_family", "role"]], on="wikipedia_title")
+        for col in ("batting_hand", "bowling_class", "bowling_family", "role"):
+            d[col] = d[col].fillna("") if col in d else ""
+        capt = pd.Series(dtype=float)
+        if caps is not None:
+            cc = caps[(caps["level"] == "international") & (caps["gender"] == gender) & (caps["format"] == fmt)]
+            capt = cc.groupby("wikipedia_title")["played"].apply(lambda x: _num(x).fillna(0).sum())
+        d["capt"] = d["wikipedia_title"].map(capt).fillna(0)
+        key = f"{'men' if gender == 'male' else 'women'}-{fmt.lower()}"
+        cols = {
+            "name": d["name"].tolist(), "title": d["wikipedia_title"].tolist(), "id": d["cricsheet_id"].tolist(),
+            "country": d["country"].tolist(), "first": d["first_year"].fillna(0).astype(int).tolist(),
+            "last": d["last_year"].fillna(d["first_year"]).fillna(0).astype(int).tolist(),
+            "decade": d["mid"].fillna(0).astype(int).tolist(),
+            "m": d["matches"].fillna(0).astype(int).tolist(), "runs": d["runs"].fillna(0).astype(int).tolist(),
+            "outs": pd.Series(d["outs"]).fillna(0).astype(int).tolist(),
+            "h100": d["hundreds"].fillna(-1).astype(int).tolist(), "h50": d["fifties"].fillna(-1).astype(int).tolist(),
+            "wkts": d["wickets"].fillna(0).astype(int).tolist(), "rc": d["rc"].fillna(0).round().astype(int).tolist(),
+            "ct": d["catches"].fillna(0).astype(int).tolist(), "st": d["stumpings"].fillna(0).astype(int).tolist(),
+            "capt": d["capt"].astype(int).tolist(), "captMark": (d["captain_marker"] == "1").astype(int).tolist(),
+            "keepMark": (d["keeper_marker"] == "1").astype(int).tolist(),
+            "hand": d["batting_hand"].tolist(), "bowl": d["bowling_class"].tolist(),
+            "fam": d["bowling_family"].tolist(), "role": d["role"].tolist(),
+        }
+        doc = {"key": key, "gender": gender, "format": fmt,
+               "label": f"{'Men' if gender == 'male' else 'Women'}'s {fmt}s, all eras",
+               "years": [int(d["first_year"].min()), int(d["last_year"].max())],
+               "countries": sorted(d["country"].unique().tolist()),
+               "fullMembers": sorted(FULL_MEMBERS),
+               "baselines": {str(int(k)): {"bat": round(float(v["bat"]), 2), "bowl": round(float(v["bowl"]), 2)}
+                             for k, v in base.iterrows() if pd.notna(k)},
+               "players": cols, "source": "Wikipedia national player lists (CC BY-SA 4.0)"}
+        size = dump(doc, out / "historic" / f"{key}.json")
+        files.append({"key": key, "label": doc["label"], "players": len(d), "bytes": size, "years": doc["years"]})
+        log(f"historic {key}: {len(d)} careers")
+    return files
+
+
+def _read_csv(path: Path) -> pd.DataFrame | None:
+    return pd.read_csv(path, dtype=str, keep_default_na=False) if path.exists() else None
+
+
+def build_captains(reference: Path, out: Path) -> dict:
+    caps = _read_csv(reference / "captain_totals.csv")
+    if caps is None:
+        return {}
+    keep = ["level", "country_or_team", "competition", "gender", "format", "name", "wikipedia_title",
+            "cricsheet_id", "first_year", "last_year", "played", "won", "lost", "drawn", "tied", "no_result",
+            "win_pct", "source_page"]
+    rows = caps[[k for k in keep if k in caps.columns]].to_dict("records")
+    dump({"rows": rows, "source": "Wikipedia captaincy lists (CC BY-SA 4.0)"}, out / "captains.json")
+    return {"rows": len(rows)}

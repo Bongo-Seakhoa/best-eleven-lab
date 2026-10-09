@@ -18,7 +18,11 @@ Conventions beyond the shared vocabularies:
   * Franchise rows use format 'T20' (the warehouse's franchise format code);
     country_or_team is the team or teams in the row's "Team(s)" cell, joined
     with '; ' because the source does not split a captain's record by team.
-  * Counts the source leaves blank or as a dash stay blank.
+  * Counts the source leaves blank, as a dash, or as anything but a whole
+    number (e.g. a win percentage in a count column) stay blank. An aggregate
+    count is blank when any of its source rows lacks that count.
+  * Tables with captain and played columns that are skipped only because no
+    format can be inferred are listed in the run report's page_problems.
   * wikipedia_title is left blank when the name links nowhere, to a list page,
     or to an article that is not about a cricketer (no cricinfo id, no
     cricketer infobox or category).
@@ -32,7 +36,8 @@ Extra columns:
                       notes ('deputised' for rows marked with a dagger,
                       'drawn includes tied' / 'tied includes no result' where
                       the source merges those columns, 'results exceed played'
-                      when the row's own counts are inconsistent, 'tied exceeds
+                      or 'results short of played' when the row's own counts
+                      (all present) do not add up, 'tied exceeds
                       lost' when a limited-overs row looks like the page swapped
                       its Lost and Tied values). Flags never change the counts.
   captain_totals.csv: revid, rows (source rows aggregated), ongoing (1 when a
@@ -56,7 +61,7 @@ COUNTRIES = ["Australia", "England", "South Africa", "India", "New Zealand", "Pa
              "Sri Lanka", "West Indies", "Bangladesh", "Zimbabwe", "Afghanistan", "Ireland",
              "Scotland", "Netherlands", "United Arab Emirates", "Nepal", "Oman", "Namibia",
              "United States of America", "Canada", "Kenya", "Hong Kong", "Papua New Guinea",
-             "Bermuda"]
+             "Bermuda", "East Africa"]
 WIKI_COUNTRY = {"United States of America": "United States"}
 FRANCHISE = [("Indian Premier League", "male"), ("Big Bash League", "male"),
              ("Pakistan Super League", "male"), ("Caribbean Premier League", "male"),
@@ -286,8 +291,18 @@ def _columns(header: list[str]) -> tuple[dict[str, int], list[str]]:
 
 
 def _int(s: str) -> int | None:
-    m = re.search(r"\d+", s or "")
-    return int(m.group()) if m else None
+    s = (s or "").strip()
+    return int(s) if re.fullmatch(r"\d+", s) else None
+
+
+def _tail_counts(r: list[dict]) -> int:
+    """Number of whole-number cells at the end of a row."""
+    n = 0
+    for c in reversed(r):
+        if not re.fullmatch(r"\d+", c["text"]):
+            break
+        n += 1
+    return n
 
 
 def parse_table(t: dict) -> tuple[list[dict], list[dict]]:
@@ -301,10 +316,13 @@ def parse_table(t: dict) -> tuple[list[dict], list[dict]]:
     rows, totals, block = [], [], []
     pad = {"text": "", "raw": "", "links": [], "th": False}
     per_series = "opposition" in cols or "location" in cols
+    width = len(t["header"])
     for r in t["rows"]:
-        if per_series and len(r) < len(t["header"]) and any(TOTAL_RE.match(c["text"]) for c in r):
-            # a captain's rowspan ended before his Total row: the counts still sit at the right
-            r = [pad] * (len(t["header"]) - len(r)) + r
+        if (len(r) < width and any(TOTAL_RE.match(c["text"]) for c in r)
+                and (per_series or _tail_counts(r) == width - cols["played"])):
+            # short Total row (a rowspan ended, or the label spans too few
+            # columns): its counts still sit at the right
+            r = [pad] * (width - len(r)) + r
         get = lambda k: r[cols[k]] if k in cols and cols[k] < len(r) else None  # noqa: E731
         name_cell = get("name")
         if name_cell is None or len({id(c) for c in r}) == 1:  # footnote rows span the table
@@ -340,8 +358,12 @@ def parse_table(t: dict) -> tuple[list[dict], list[dict]]:
         marked = [c for c in (get("period"), name_cell) if c]
         if any(re.search("[†‡]", c["raw"]) for c in marked):
             row_notes.insert(0, "deputised")
-        if stats["played"] is not None and sum(stats[k] or 0 for k in STATS[1:]) > stats["played"]:
+        results = [stats[k] for k in STATS[1:] if k in cols]
+        if stats["played"] is not None and sum(v or 0 for v in results) > stats["played"]:
             row_notes.append("results exceed played")
+        elif stats["played"] is not None and results and None not in results \
+                and sum(results) < stats["played"]:
+            row_notes.append("results short of played")
         if not per_series and (stats["tied"] or 0) >= 3 and stats["tied"] > (stats["lost"] or 0):
             row_notes.append("tied exceeds lost")  # usually Lost/Tied values swapped on the page
         teams = get("teams")
@@ -379,7 +401,7 @@ def years(text: str) -> list[int]:
 
 def _sum(s: pd.Series):
     v = pd.to_numeric(s, errors="coerce")
-    return int(v.sum()) if v.notna().any() else None
+    return int(v.sum()) if len(v) and v.notna().all() else None  # partial sums are not totals
 
 
 def aggregate(df: pd.DataFrame) -> pd.DataFrame:
@@ -419,14 +441,16 @@ def collect(wiki: Wiki, pages: list[dict]) -> tuple[pd.DataFrame, list[dict], li
         used = 0
         for t in page_tables(p["html"]):
             kind = classify(t, pg["level"], pg["gender"])
+            label = " > ".join(dict.fromkeys(h for h in [*t["headings"], t["caption"]] if h))
             if not kind:
+                if not SKIP_RE.search(label) and parse_table(t)[0]:
+                    problems.append(f"{p['title']}: table {label!r} skipped, format not inferable")
                 continue
             got, tot = parse_table(t)
             if not got:
                 continue
             used += 1
             gender, fmt = kind
-            label = " > ".join(dict.fromkeys(h for h in [*t["headings"], t["caption"]] if h))
             base = {"level": pg["level"], "competition": pg["competition"], "gender": gender,
                     "format": fmt, "source_page": p["title"], "revid": p["revid"],
                     "source_table": label}

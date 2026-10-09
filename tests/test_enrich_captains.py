@@ -179,6 +179,78 @@ def test_fallback_cricsheet_requires_unique_surname_match():
     assert C.fallback_cricsheet({"title": "Someone Else", "text": page["text"]}, by_ci, names) is None
 
 
+def test_short_grand_total_in_one_row_table_is_right_aligned():
+    (t,) = tables("captains_short_grand_total.html")
+    assert C.classify(t, "international") == ("female", "ODI")
+    rows, totals = C.parse_table(t)
+    assert [r["name"] for r in rows] == ["Shaiza Khan", "Bismah Maroof"]
+    (grand,) = totals
+    assert grand["team_total"]
+    assert (grand["played"], grand["won"], grand["tied"], grand["lost"], grand["no_result"]) == (
+        168, 48, 1, 116, 3)
+
+
+def _synthetic(header, *rows):
+    # synthetic table, invented values
+    th = "".join(f"<th>{h}</th>" for h in header)
+    trs = "".join("<tr>" + "".join(f"<td>{v}</td>" for v in r) + "</tr>" for r in rows)
+    html = (f"<h2>Men's cricket</h2><h3>Test match captains</h3>"
+            f"<table class='wikitable'><tr>{th}</tr>{trs}</table>")
+    (t,) = C.page_tables(html)
+    return t
+
+
+def test_short_total_left_aligned_when_counts_do_not_fill_the_span():
+    # label spans the leading columns and the last count is missing
+    t = _synthetic(["No.", "Name", "Year", "Played", "Won", "Tied", "Lost", "N/R"],
+                   ["1", "A B", "2001", "5", "2", "0", "3", "0"])
+    t["rows"].append([{"text": "Overall", "raw": "Overall", "links": [], "th": False}] * 3
+                     + [{"text": v, "raw": v, "links": [], "th": False} for v in ("5", "2", "0", "3")])
+    _, (tot,) = C.parse_table(t)
+    assert (tot["played"], tot["won"], tot["tied"], tot["lost"], tot["no_result"]) == (5, 2, 0, 3, None)
+
+
+def test_non_integer_count_cell_stays_blank_and_flags():
+    # mirrors a NZ Test row whose Drawn cell holds a win percentage
+    t = _synthetic(["Number", "Name", "Year(s)", "Opposition", "Location", "Played", "Won", "Lost",
+                    "Drawn"],
+                   ["21", "C D", "1990-91", "X", "Y", "1", "0", "0", "0.00"],
+                   ["22", "E F", "1992-93", "X", "Y", "3", "1", "1", "0"])
+    rows, _ = C.parse_table(t)
+    cd, ef = rows
+    assert (cd["played"], cd["won"], cd["lost"], cd["drawn"]) == (1, 0, 0, None)
+    assert cd["notes"] == ""  # a blank count is unknown, not short
+    assert ef["notes"] == "results short of played"
+    assert C._int("-") is None and C._int(" 12 ") == 12 and C._int("45.5%") is None
+
+
+def test_aggregate_blank_when_any_row_lacks_a_count():
+    t = _synthetic(["Number", "Name", "Year(s)", "Opposition", "Location", "Played", "Won", "Lost",
+                    "Drawn"],
+                   ["1", "<a href='/wiki/G_H'>G H</a>", "2001", "X", "Y", "2", "1", "1", "0"],
+                   ["1", "<a href='/wiki/G_H'>G H</a>", "2002", "X", "Y", "1", "", "", ""])
+    agg = C.aggregate(frame(t))
+    (g,) = agg.itertuples()
+    assert (g.played, g.won, g.lost, g.drawn, g.win_pct) == (3, None, None, None, None)
+
+
+def test_unclassifiable_table_is_reported():
+    # synthetic: a captains table whose heading names no format
+    html = ("<h2>Women's Captain</h2><table class='wikitable'><tr><th>No.</th><th>Name</th>"
+            "<th>Played</th><th>Won</th><th>Lost</th></tr>"
+            "<tr><td>1</td><td>A B</td><td>5</td><td>1</td><td>4</td></tr></table>")
+
+    class W:
+        def parse(self, title):
+            return {"title": title, "revid": 1, "html": html}
+
+    df, _, problems = C.collect(W(), [{"title": "P", "level": "international", "country": "X",
+                                       "competition": "", "gender": ""}])
+    assert df.empty
+    assert problems == ["P: table \"Women's Captain\" skipped, format not inferable",
+                        "P: no captain tables recognised"]
+
+
 def test_list_page_matcher():
     assert C._is_list_page("List of South Africa national cricket captains", "South Africa")
     assert C._is_list_page("List of Indian Premier League captains", "Indian Premier League")

@@ -71,6 +71,26 @@ def build_player_db(warehouse: str | Path, reference: str | Path, competitions: 
             "leagues": {lg["key"]: lg for lg in leagues}, "wh": wh}
 
 
+STALE_MONTHS = 15
+
+
+def current_squads(squads: pd.DataFrame, data_end: pd.Timestamp) -> pd.DataFrame:
+    """Drop squad sections whose own 'as of' date is too old to count as current,
+    and players the page marks as withdrawn."""
+    as_of = pd.to_datetime(squads.get("as_of", pd.Series("", index=squads.index)), errors="coerce")
+    fresh = as_of.isna() | (as_of >= data_end - pd.DateOffset(months=STALE_MONTHS))
+    status = squads.get("status", pd.Series("", index=squads.index))
+    return squads[fresh & (status != "withdrawn")]
+
+
+def marked(s: pd.DataFrame, formats_col: str, marker: str, fmt: str) -> pd.Series:
+    """Captain/vice-captain for a format: an explicit per-format mark, or a bare
+    C/VC marker on a table that lists no formats for it."""
+    explicit = s[formats_col].str.contains(fmt, na=False)
+    bare = (s.get("captain", "") == marker) & (s["captain_formats"] == "") & (s["vice_captain_formats"] == "")
+    return explicit | bare
+
+
 def last_dates(wh: Warehouse, scope: str) -> pd.Series:
     m = wh.matches[wh.matches["scope"] == scope][["match_id", "end_date"]]
     ap = wh.table("appearances").merge(m, on="match_id")
@@ -92,13 +112,12 @@ def scope_flags(ctx: dict, scope: str, players: pd.Index, seasons: pd.DataFrame)
         months = ACTIVE_MONTHS[fmt]
         nat = db.loc[players, "national_team"].fillna("")
         if squads is not None:
-            s = squads[(squads["level"] == "international") & (squads["gender"] == gender) & (squads["cricsheet_id"] != "")]
+            s = current_squads(squads, ctx["data_end"])
+            s = s[(s["level"] == "international") & (s["gender"] == gender) & (s["cricsheet_id"] != "")]
             s = s[s["forms"].str.contains(fmt, na=False)]
             out["squad"] = ids.isin(set(s["cricsheet_id"])).astype(int).to_numpy()
-            vcs = s[s["vice_captain_formats"].str.contains(fmt, na=False)]
-            out["vc"] = ids.isin(set(vcs["cricsheet_id"])).astype(int).to_numpy()
-            cur = s[s["captain_formats"].str.contains(fmt, na=False)]
-            out["cc"] = ids.isin(set(cur["cricsheet_id"])).astype(int).to_numpy()
+            out["vc"] = ids.isin(set(s.loc[marked(s, "vice_captain_formats", "VC", fmt), "cricsheet_id"])).astype(int).to_numpy()
+            out["cc"] = ids.isin(set(s.loc[marked(s, "captain_formats", "C", fmt), "cricsheet_id"])).astype(int).to_numpy()
         if caps is not None:
             c = caps[(caps["level"] == "international") & (caps["gender"] == gender) & (caps["format"] == fmt)
                      & (caps["cricsheet_id"] != "")]
@@ -129,7 +148,8 @@ def scope_flags(ctx: dict, scope: str, players: pd.Index, seasons: pd.DataFrame)
         months = ACTIVE_MONTHS["league"]
         lg = ctx["leagues"].get(scope, {})
         if squads is not None and lg:
-            s = squads[(squads["level"] == "franchise") & (squads["competition"] == lg["label"]) & (squads["cricsheet_id"] != "")]
+            s = current_squads(squads, ctx["data_end"])
+            s = s[(s["level"] == "franchise") & (s["competition"] == lg["label"]) & (s["cricsheet_id"] != "")]
             out["squad"] = ids.isin(set(s["cricsheet_id"])).astype(int).to_numpy()
             cur = s[s["captain_formats"] != ""] if "captain_formats" in s else s.iloc[0:0]
             out["cc"] = ids.isin(set(cur["cricsheet_id"])).astype(int).to_numpy()

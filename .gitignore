@@ -17,3 +17,4 @@ node_modules/
 
 # scratch caches written by verification runs
 /-/
+.claude/

@@ -50,8 +50,19 @@ def _select(args, p: pl.Paths) -> int:
     return 0
 
 
+class _NoCacheHandler(http.server.SimpleHTTPRequestHandler):
+    """Local preview only: always revalidate, so edits show on reload."""
+
+    def end_headers(self):
+        self.send_header("Cache-Control", "no-store")
+        super().end_headers()
+
+    def log_message(self, *args):
+        pass
+
+
 def _serve(args, p: pl.Paths) -> int:
-    handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=str(p.site))
+    handler = functools.partial(_NoCacheHandler, directory=str(p.site))
     with socketserver.TCPServer(("127.0.0.1", args.port), handler) as httpd:
         url = f"http://127.0.0.1:{args.port}/"
         print(f"Serving {p.site} at {url} (Ctrl+C to stop)")

@@ -6,16 +6,24 @@ each franchise team article (IPL, SA20, BBL, PSL, CPL, WPL, WBBL), so the Best X
 can be limited to contracted or recently selected players instead of everyone
 found in match data. When a franchise article has no squad section, the team's
 latest season article ("2027 MI Cape Town season") and then the league's season
-article ("2026 Caribbean Premier League", Squads) are used.
+article ("2026 Caribbean Premier League", Squads) are used. The league season
+list also replaces a team-article list that is stale: one dated ("As of 14 August
+2025") before that season, or an undated one that shares under 75% of the players
+listed for the upcoming season. Players kept from the season list take their
+attributes (role, styles, nationality, overseas) from the team article.
+
+role_group uses the role vocabulary ('batter', 'opening batter', 'wicket-keeper',
+'wicket-keeper-batter', 'all-rounder', 'bowler', ...); a "Spin bowlers" / "Seam
+bowlers" group sets bowling_family when the bowling style does not.
 
 Output data/reference/squads.csv has the columns in COLUMNS. Extra trailing
 columns (EXTRA):
-  nationality      franchise rows: countries from the nationality column or a
-                   "(ENG)"-style code after the name, semicolon-separated
+  nationality      franchise rows: countries (Cricsheet team names; Caribbean
+                   territories -> West Indies) from the nationality column, a flag
+                   icon or an "(ENG)"-style code by the name, semicolon-separated
   overseas_basis   how `overseas` was set: 'note' (the row's notes say overseas /
-                   international signing / local, or a nationality code follows the
-                   name), 'nationality' (nationality column against the league's
-                   home country) or ''
+                   international / local, or a code or flag marks only some names),
+                   'nationality' (nationality against the league's home country) or ''
   overseas_legend  the page's own wording for the overseas marker, else a short
                    description of which column/marker carried it
   captain          'C' / 'VC' when the row is marked captain or vice-captain in any
@@ -28,7 +36,17 @@ columns (EXTRA):
                    cricketer biography; weaker, check before trusting), 'redlink' (the
                    page links a non-existent article), 'non-player link' (the link
                    resolves to a page without a cricketer infobox, e.g. a list of
-                   players or a namesake; title and id left empty) or '' (plain text)
+                   players or a namesake; title left empty) or '' (plain text)
+  batting_hand, bowling_class, bowling_family   normalised from the listed styles
+  status           notes such as withdrawn / injured / replacement, semicolon-separated
+  as_of            date the section says its list is current to ("As of ...",
+                   "Updated as on ..."), ISO; '' when not stated
+  id_basis         how cricsheet_id was found: 'wikipedia' (title -> Wikidata /
+                   {{Cricinfo}} id), 'cricinfo profile' (profile URL in the article),
+                   'team name match' (unique name match among players who appeared
+                   for that national team or league, with no namesake in the register)
+  detail_source    team article the attributes came from when the row is from a
+                   season list
 
 The rendered HTML is parsed with lxml rather than wiki.html_tables(): pandas
 promotes the first role-group row ("Batters") to a header level and the link
@@ -39,10 +57,14 @@ from __future__ import annotations
 import copy
 import datetime as dt
 import re
+import unicodedata
+from collections import Counter
 from pathlib import Path
 
 import pandas as pd
 
+from .captains import fallback_cricsheet
+from .players import CRICKET_CODES, batting_hand, bowling
 from .wiki import Resolver, Wiki, infobox, title_from_url
 
 COLUMNS = ["level", "team", "competition", "gender", "name", "wikipedia_title", "cricsheet_id",
@@ -50,7 +72,8 @@ COLUMNS = ["level", "team", "competition", "gender", "name", "wikipedia_title", 
            "vice_captain_formats", "overseas", "domestic_team", "league_teams", "section_title",
            "source_page", "revid", "page_timestamp"]
 EXTRA = ["nationality", "overseas_basis", "overseas_legend", "captain", "shirt_number",
-         "last_test", "last_odi", "last_t20i", "source_kind", "title_basis"]
+         "last_test", "last_odi", "last_t20i", "source_kind", "title_basis",
+         "batting_hand", "bowling_class", "bowling_family", "status", "as_of", "id_basis", "detail_source"]
 
 # Cricsheet team name -> article stem
 NATIONAL = {c: c for c in [
@@ -114,15 +137,33 @@ CAPT_RES = [  # group 1: formats, group 2: captain / vice-captain marker
     re.compile(rf"{_FMTS}\s+((?:vice[- ]?)?captain)\b", re.I),
     re.compile(rf"((?:vice[- ]?)?captain)\s*\(\s*{_FMTS}\s*\)", re.I),
 ]
-OVERSEAS_RE = re.compile(r"overseas|international signing|international player|foreign|\bimport", re.I)
+# notes wording; "International Replacement Player" counts, so any "international"
+OVERSEAS_RE = re.compile(r"overseas|\binternational\b|foreign|\bimport", re.I)
+# page prose; narrower so "Players with international caps ..." is not taken as the legend
+LEGEND_RE = re.compile(r"overseas|international (?:signing|player|replacement)|foreign player|\bimport", re.I)
 LOCAL_RE = re.compile(r"\blocal\b", re.I)
+STATUS = [("withdrawn", r"withdr"), ("injured", r"injur|ruled out"), ("replacement", r"replac"),
+          ("unavailable", r"unavailab"), ("released", r"\breleas"), ("pre-signing", r"pre-?sign"),
+          ("wildcard", r"wild ?card")]
 SKIP_LINKS = {"Captain (cricket)", "Wicket-keeper", "Vice-captain", "Overseas player"}
-CODES = {"AFG": "Afghanistan", "AUS": "Australia", "BAN": "Bangladesh", "CAN": "Canada",
-         "ENG": "England", "HK": "Hong Kong", "IND": "India", "IRE": "Ireland", "IRL": "Ireland",
-         "MAS": "Malaysia", "NAM": "Namibia", "NED": "Netherlands", "NEP": "Nepal",
-         "NZ": "New Zealand", "OMA": "Oman", "PAK": "Pakistan", "RSA": "South Africa",
-         "SA": "South Africa", "SCO": "Scotland", "SL": "Sri Lanka", "UAE": "United Arab Emirates",
-         "USA": "United States of America", "WI": "West Indies", "ZIM": "Zimbabwe"}
+CODES = {**CRICKET_CODES, "IRL": "Ireland", "MAS": "Malaysia", "JER": "Jersey", "UGA": "Uganda",
+         "WIN": "West Indies", "ZAF": "South Africa"}
+MARKER_WORDS = {"C", "VC", "WK", "CAPT"}  # "(VC)" is a marker, not a country code
+WEST_INDIES = {"Anguilla", "Antigua", "Antigua and Barbuda", "Barbados", "British Virgin Islands",
+               "Cricket West Indies", "Dominica", "Grenada", "Guyana", "Jamaica", "Leeward Islands",
+               "Montserrat", "Nevis", "Saint Kitts and Nevis", "Saint Lucia", "Saint Martin",
+               "Saint Vincent and the Grenadines", "Sint Maarten", "St Kitts and Nevis", "St Lucia",
+               "St Vincent and the Grenadines", "Trinidad", "Trinidad and Tobago",
+               "United States Virgin Islands", "US Virgin Islands", "Windward Islands"}
+_MONTHS = ["january", "february", "march", "april", "may", "june", "july", "august", "september",
+           "october", "november", "december"]
+_MON = "|".join(_MONTHS)
+AS_OF_RE = re.compile(rf"(?:\bas (?:of|at|on)|\bupdated(?: as)?(?: on| of)?|\bcorrect as of)\s*:?\s*"
+                      rf"(\d{{1,2}}\s+(?:{_MON})\s+\d{{4}}|(?:{_MON})\s+\d{{1,2}},?\s+\d{{4}}|(?:{_MON})\s+\d{{4}})",
+                      re.I)
+_BAT_OK = re.compile(r"hand|bat|left|right", re.I)
+_BOWL_OK = re.compile(r"arm|spin|break|orthodox|medium|fast|pace|seam|slow|googly|chinaman|wrist|finger"
+                      r"|\boff\b|\bleg\b", re.I)
 
 HEADER_FIELDS = [
     ("name", r"(full )?name|players?( name)?"),
@@ -200,8 +241,9 @@ def player_link(el) -> tuple[str, str]:
 
 
 def split_markers(text: str) -> tuple[str, list[str]]:
-    """'Moeen Ali (c)' -> ('Moeen Ali', ['c']); also strips footnote symbols."""
-    marks = [_ws(m) for m in re.findall(r"\(\s*([^()]{1,24}?)\s*\)", text)]
+    """'Moeen Ali (c)' -> ('Moeen Ali', ['c']); '(c, wk)' gives two marks; also strips
+    footnote symbols."""
+    marks = [_ws(p) for m in re.findall(r"\(\s*([^()]{1,24}?)\s*\)", text) for p in m.split(",") if p.strip()]
     name = re.sub(r"\([^()]*\)", " ", text)
     marks += re.findall(r"[*†‡§¶^#~+]", name)
     name = re.sub(r"[*†‡§¶^#~+]", " ", name)
@@ -235,27 +277,64 @@ def parse_captaincy(text: str) -> tuple[list[str], list[str], str]:
 
 
 def role_group(label: str) -> str:
-    s = (label or "").lower()
-    if re.search(r"all[- ]?round", s):
-        return "all-rounder"
-    if re.search(r"wicket[- ]?keep|keeper", s):
-        return "wicket-keeper"
-    if re.search(r"spin", s):
-        return "spin bowler"
-    if re.search(r"pace|fast|seam|quick", s):
-        return "pace bowler"
-    if re.search(r"bowl", s):
+    """Group heading or role cell -> role vocabulary."""
+    s = re.sub(r"[-_]", " ", (label or "").lower())
+    if re.search(r"all ?round", s):
+        return ("batting all-rounder" if re.search(r"batting all", s) else
+                "bowling all-rounder" if re.search(r"bowling all", s) else "all-rounder")
+    if re.search(r"wicket ?keep|keeper", s):
+        return "wicket-keeper-batter" if re.search(r"\bbat", s) else "wicket-keeper"
+    if re.search(r"spin|pace|fast|seam|quick|bowl", s):
         return "bowler"
+    if re.search(r"\bopen", s):
+        return "opening batter"
+    if re.search(r"top order", s):
+        return "top-order batter"
+    if re.search(r"middle order", s):
+        return "middle-order batter"
     if re.search(r"bat", s):
         return "batter"
     return ""
 
 
+def group_family(label: str) -> str:
+    s = (label or "").lower()
+    return "spin" if "spin" in s else "pace" if re.search(r"pace|fast|seam|quick", s) else ""
+
+
+def style_fields(bat: str, bowl: str, family_hint: str = "") -> dict:
+    """Listed styles (blanked when the cell holds something else, e.g. a shifted
+    team name) plus batting_hand / bowling_class / bowling_family."""
+    bat = bat if _BAT_OK.search(bat or "") else ""
+    bowl = bowl if _BOWL_OK.search(bowl or "") else ""
+    cls, fam, _ = bowling(bowl)
+    return {"batting_style": bat, "bowling_style": bowl, "batting_hand": batting_hand(bat),
+            "bowling_class": cls, "bowling_family": fam or family_hint}
+
+
+def status(text: str) -> str:
+    return ";".join(k for k, rx in STATUS if re.search(rx, text or "", re.I))
+
+
 def country(title_or_text: str) -> str:
     s = re.sub(r"( women's| men's)?( national)?( cricket)? team$", "", title_or_text or "").strip()
     s = re.sub(r"\s*\(.*\)$", "", s)
+    if s in WEST_INDIES:
+        return "West Indies"
     return {"United States": "United States of America", "USA": "United States of America",
             "UAE": "United Arab Emirates"}.get(s, s)
+
+
+def as_of(html: str) -> str:
+    """ISO date (or year-month) the section says its list is current to."""
+    m = AS_OF_RE.search(_prose(html))
+    if not m:
+        return ""
+    s = m.group(1).replace(",", "")
+    day = re.search(r"\b(\d{1,2})\b", s)
+    mon = _MONTHS.index(re.search(_MON, s, re.I).group(0).lower()) + 1
+    year = re.search(r"\d{4}", s).group(0)
+    return f"{year}-{mon:02d}-{int(day.group(1)):02d}" if day else f"{year}-{mon:02d}"
 
 
 def _field(header: str) -> str | None:
@@ -350,15 +429,20 @@ def _tables(html: str):
     return [t for t in tree.xpath("//table") if not t.xpath(".//table")]
 
 
+def _prose(html: str) -> str:
+    """Section text outside tables and reference lists."""
+    from lxml import html as lh
+    tree = lh.fromstring(html or "<div></div>")
+    for bad in tree.xpath("//style|//table|//sup[contains(@class,'reference')]|//ol[contains(@class,'references')]"
+                          "|//div[contains(@class,'reflist')]|//*[contains(@class,'mw-references-wrap')]"):
+        bad.drop_tree()
+    return _ws(tree.text_content())
+
+
 def legend(html: str) -> str:
     """Page sentence explaining an overseas marker, if any."""
-    from lxml import html as lh
-    tree = lh.fromstring(html)
-    for bad in tree.xpath("//style|//table|//sup[contains(@class,'reference')]"):
-        bad.drop_tree()
-    text = _ws(tree.text_content())
-    for sent in re.split(r"(?<=[.!?])\s+|\s{2,}", text):
-        if OVERSEAS_RE.search(sent) and len(sent) < 250:
+    for sent in re.split(r"(?<=[.!?])\s+|\s{2,}", _prose(html)):
+        if LEGEND_RE.search(sent) and len(sent) < 250:
             return sent.strip()
     return ""
 
@@ -385,8 +469,15 @@ def squad_rows(html: str, *, home: set[str] | None = None) -> list[dict]:
             if not name or name == r["group"]:
                 continue
             notes = " ".join(cell_text(el) for _, el in cells.get("notes", []))
+            forms_text = cell_text(one.get("forms"))
             capt = " ".join([cell_text(one.get("captaincy")), notes, " ".join(f"({m})" for m in marks)])
             c, vc, flag = parse_captaincy(capt)
+            # some pages mark captaincy in the forms cell: "ODI (C), T20I (C)"; parsed on its
+            # own so a "(C)" after the name is not read as captain of every listed format
+            fc, fvc, fflag = parse_captaincy(forms_text)
+            c = [f for f in FORMATS if f in c or f in fc]
+            vc = [f for f in FORMATS if f in vc or f in fvc]
+            flag = "C" if "C" in (flag, fflag) else "VC" if "VC" in (flag, fflag) else ""
             nat_el = one.get("nationality")
             nats = [country(t) for t in flag_titles(nat_el)] or (
                 [country(cell_text(nat_el))] if cell_text(nat_el) else [])
@@ -405,11 +496,12 @@ def squad_rows(html: str, *, home: set[str] | None = None) -> list[dict]:
             if not role and re.fullmatch(r"(?i)\W*(wicket[- ]?keeper|keeper|batter|bowler|all[- ]?rounder)\W*",
                                          notes):
                 role = role_group(notes)
+            family = group_family(r["group"]) or group_family(cell_text(one.get("role")))
             recs.append({
                 "name": name, "wikipedia_title": title, "title_basis": title_basis, "role_group": role,
-                "batting_style": cell_text(one.get("batting_style")),
-                "bowling_style": cell_text(one.get("bowling_style")),
-                "forms": ";".join(parse_forms(cell_text(one.get("forms")))),
+                **style_fields(cell_text(one.get("batting_style")), cell_text(one.get("bowling_style")), family),
+                "status": status(" ".join([notes, " ".join(marks)])),
+                "forms": ";".join(parse_forms(forms_text)),
                 "contracted": ("1" if contract and not re.fullmatch(r"n|no", contract, re.I) else "0")
                 if has_contract else "",
                 "captain_formats": ";".join(c), "vice_captain_formats": ";".join(vc), "captain": flag,
@@ -446,45 +538,57 @@ def _norm_team(s: str) -> str:
     return re.sub(r"[^a-z0-9]+", " ", s).strip()
 
 
-def season_team_rows(html: str, team: str, article: str) -> list[dict]:
-    """Players listed under one team's column in a season article's squads table."""
+def season_team_rows(html: str, team: str, article: str, *, home: set[str] | None = None) -> list[dict]:
+    """Players listed under one team's column in a season article's squads table. A
+    table may repeat its header row for a second block of teams (2026 PSL)."""
     keys = {_norm_team(team), _norm_team(article)}
-    out = []
+    out, kinds = [], set()
     for table in _tables(html):
-        grid = _grid(table)
-        hdr_i = next((i for i, (p, _) in enumerate(grid) if p and all(c.tag == "th" for c in p)), None)
-        if hdr_i is None:
-            continue
-        hdr = grid[hdr_i][1]
-        cols = [j for j, el in enumerate(hdr)
-                if _norm_team(cell_text(el)) in keys
-                or any(_norm_team(t) in keys for t in flag_titles(el))]
-        if not cols:
-            continue
-        seen = set()
-        for phys, row in grid[hdr_i + 1:]:
+        cols, seen = [], set()
+        for phys, row in _grid(table):
+            if phys and all(c.tag == "th" for c in phys):
+                cols = [j for j, el in enumerate(row)
+                        if _norm_team(cell_text(el)) in keys
+                        or any(_norm_team(t) in keys for t in flag_titles(el))]
+                continue
             for j in cols:
                 el = row[j] if j < len(row) else None
                 if el is None or id(el) in seen:
                     continue
                 seen.add(id(el))
-                items = el.xpath(".//li") or [el]
-                for it in items:
+                for it in el.xpath(".//li") or [el]:
                     for part in _br_split(it):
                         name, marks = split_markers(cell_text(part))
                         if not name:
                             continue
-                        c, vc, flag = parse_captaincy(" ".join(f"({m})" for m in marks))
-                        codes = [CODES.get(m.upper(), m) for m in marks if re.fullmatch(r"[A-Z]{2,4}", m)]
+                        _, _, flag = parse_captaincy(" ".join(f"({m})" for m in marks))
+                        codes = [m.upper() for m in marks
+                                 if re.fullmatch(r"[A-Z]{2,4}", m) and m.upper() not in MARKER_WORDS]
+                        flags = [country(t) for t in (_href_title(a) for a in
+                                 part.xpath(".//*[contains(@class,'flagicon')]//a[@href]")) if t]
+                        kinds |= {"code"} if codes else set()
+                        kinds |= {"flag"} if flags else set()
+                        nats = [CODES[c] for c in codes if c in CODES] + flags
                         title, title_basis = player_link(part)
                         out.append({"name": name, "wikipedia_title": title, "title_basis": title_basis,
                                     "captain": flag, "captain_formats": "", "vice_captain_formats": "",
-                                    "nationality": ";".join(codes),
-                                    "overseas": "1" if codes else "", "overseas_basis": "note" if codes else ""})
-    if any(r["overseas"] == "1" for r in out):  # codes mark overseas players, so the rest are local
+                                    "status": status(" ".join(marks)),
+                                    "nationality": ";".join(dict.fromkeys(nats)), "_marked": bool(codes or flags),
+                                    "overseas": "", "overseas_basis": "", "overseas_legend": ""})
+    marked = [r for r in out if r["_marked"]]
+    if marked and len(marked) < len(out):  # only some names carry a code/flag: those are overseas
+        leg = " / ".join(sorted({"code": "country code after the name, e.g. (ENG)",
+                                 "flag": "flag icon before the name"}[k] for k in kinds)) + " marks overseas"
         for r in out:
-            r.update(overseas=r["overseas"] or "0", overseas_basis="note",
-                     overseas_legend="country code after the name, e.g. (ENG), marks overseas")
+            r.update(overseas="1" if r["_marked"] else "0", overseas_basis="note", overseas_legend=leg)
+    elif marked and home:  # every name is flagged: compare with the league's home country
+        for r in out:
+            if r["nationality"]:
+                local = bool(set(r["nationality"].split(";")) & home)
+                r.update(overseas="0" if local else "1", overseas_basis="nationality",
+                         overseas_legend="flag/code by the name vs " + "/".join(sorted(home)))
+    for r in out:
+        del r["_marked"]
     return out
 
 
@@ -547,7 +651,7 @@ def _from_article(wiki: Wiki, title: str, rows_fn) -> tuple[list[dict], dict] | 
                 if leg and r.get("overseas_basis"):
                     r["overseas_legend"] = leg
             return rows, {"section_title": _ws(re.sub(r"<[^>]+>", "", s["line"])),
-                          "source_page": p["title"], "revid": p["revid"]}
+                          "source_page": p["title"], "revid": p["revid"], "as_of": as_of(p["html"])}
     return None
 
 
@@ -581,41 +685,103 @@ def national(wiki: Wiki) -> tuple[list[dict], list[str]]:
     return rows, failed
 
 
-def franchise(wiki: Wiki, today: dt.date | None = None) -> tuple[list[dict], list[str]]:
+def _norm_name(s: str) -> str:
+    s = unicodedata.normalize("NFKD", s or "").encode("ascii", "ignore").decode().lower()
+    return re.sub(r"[^a-z]+", "", s)
+
+
+def _keys(r: dict, canon: dict[str, str]) -> set:
+    t = r.get("wikipedia_title") or ""
+    return ({("t", canon.get(t, t))} if t else set()) | {("n", _norm_name(r["name"]))}
+
+
+ENRICH = ["role_group", "batting_style", "bowling_style", "batting_hand", "bowling_class", "bowling_family",
+          "nationality"]
+
+
+def choose_roster(team_got, team_kind: str, season_got, season: str, upcoming: str,
+                  canon: dict[str, str]) -> tuple[tuple | None, str, dict]:
+    """Pick the team-article list or the league season list (see module docstring).
+    canon maps linked titles to their redirect targets."""
+    if not season_got:
+        return team_got, team_kind, ({"source": team_kind} if team_got else {})
+    if not team_got:
+        return season_got, "league season article", {"source": "league season article", "season": season}
+    (t_rows, t_prov), (s_rows, _) = team_got, season_got
+    t_keys = [_keys(r, canon) for r in t_rows]
+    common = sum(1 for r in s_rows if any(_keys(r, canon) & k for k in t_keys))
+    date = t_prov.get("as_of", "")
+    check = {"team_list": len(t_rows), "season_list": len(s_rows), "season": season, "common": common,
+             "as_of": date}
+    if date and int(date[:4]) < int(season[:4]):
+        reason = f"team list as of {date} predates the {season} season list"
+    elif not date and season == upcoming and common < 0.75 * len(s_rows):
+        reason = f"undated team list shares {common}/{len(s_rows)} players with the {season} season list"
+    else:
+        return team_got, team_kind, {**check, "source": team_kind}
+    for r in s_rows:  # player attributes from the team article; captaincy and status stay season-specific
+        k = _keys(r, canon)
+        t = next((x for x, xk in zip(t_rows, t_keys) if k & xk), None)
+        if t is None:
+            continue
+        if not r.get("wikipedia_title") and t.get("wikipedia_title"):
+            r.update(wikipedia_title=t["wikipedia_title"], title_basis=t.get("title_basis", ""))
+        for f in ENRICH:
+            if not r.get(f) and t.get(f):
+                r[f] = t[f]
+        if not r.get("overseas") and t.get("overseas"):
+            r.update(overseas=t["overseas"], overseas_basis=t.get("overseas_basis", ""),
+                     overseas_legend="team article: " + (t.get("overseas_legend") or ""))
+        r["detail_source"] = t_prov["source_page"]
+    return season_got, "league season article", {**check, "source": "league season article", "reason": reason}
+
+
+def franchise(wiki: Wiki, today: dt.date | None = None) -> tuple[list[dict], list[str], dict]:
     today = today or dt.date.today()
-    rows, failed = [], []
+    rows, failed, checks = [], [], {}
     for comp, cfg in LEAGUES.items():
         seasons = season_labels(cfg["season"], today)
+        home = cfg["home"]
         exist = _existing(wiki, list(cfg["teams"].values())
                           + [f"{s} {a} season" for s in seasons for a in cfg["teams"].values()]
                           + [cfg["article"].format(s=s) for s in seasons])
+        # a season title can redirect to the league article ("2027 Pakistan Super League")
+        season_page = {t: c for t, c in exist.items() if any(s in t and s in c for s in seasons)}
         for team, article in cfg["teams"].items():
-            home = cfg["home"]
             got, kind = None, ""
             if article in exist:
                 got, kind = _from_article(wiki, exist[article], lambda h: squad_rows(h, home=home)), "team article"
             for s in seasons if not got else []:
                 t = f"{s} {article} season"
-                if t in exist:
-                    got, kind = _from_article(wiki, exist[t], lambda h: squad_rows(h, home=home)), "team season article"
+                if t in season_page:
+                    got, kind = _from_article(wiki, season_page[t], lambda h: squad_rows(h, home=home)), \
+                        "team season article"
                     if got:
                         break
-            for s in seasons if not got else []:
+            season_got, season = None, ""
+            for s in seasons:
                 t = cfg["article"].format(s=s)
-                if t in exist:
-                    got = _from_article(wiki, exist[t], lambda h: season_team_rows(h, team, article))
-                    kind = "league season article"
-                    if got:
+                if t in season_page:
+                    season_got = _from_article(
+                        wiki, season_page[t], lambda h: season_team_rows(h, team, article, home=home))
+                    if season_got:
+                        season = s
                         break
+            canon = {}
+            if got and season_got:
+                canon = _existing(wiki, [r["wikipedia_title"] for r in got[0] + season_got[0]
+                                         if r.get("wikipedia_title")])
+            got, kind, check = choose_roster(got, kind, season_got, season, seasons[0], canon)
             if not got:
                 failed.append(f"{comp}: {team}: no squad section in team, team-season or season article")
                 continue
+            checks[f"{comp}|{team}"] = check
             recs, prov = got
             for r in recs:
                 r.update(prov, level="franchise", team=team, competition=comp, gender=cfg["gender"],
                          source_kind=kind, forms="", contracted="")
             rows += recs
-    return rows, failed
+    return rows, failed, checks
 
 
 def timestamps(wiki: Wiki, revids) -> dict[int, str]:
@@ -664,10 +830,78 @@ def warehouse_check(df: pd.DataFrame, warehouse: str | Path = "data/warehouse") 
 
 
 # -------------------------------------------------------------------- run
+# --------------------------------------------------------------- identity
+def _tokens(s: str) -> list[str]:
+    s = unicodedata.normalize("NFKD", s or "").encode("ascii", "ignore").decode()
+    return re.findall(r"[A-Za-z][A-Za-z'-]*", re.sub(r"\s*\(\d+\)$", "", s))
+
+
+def _name_kind(q: list[str], register_name: str) -> str:
+    """'full' (same tokens) or 'initial' ("M Heingo" for "Max Heingo") or ''."""
+    r = _tokens(register_name)
+    if not r or len(q) < 2:
+        return ""
+    if [x.lower() for x in q] == [x.lower() for x in r]:
+        return "full"
+    given = r[:-1]
+    if (given and q[-1].lower() == r[-1].lower() and all(g.isupper() and len(g) <= 4 for g in given)
+            and q[0][0].lower() == given[0][0].lower()):
+        return "initial"
+    return ""
+
+
+def register_counts(people_csv: str | Path) -> Counter:
+    """Register people per normalised name (name and unique_name, '(2)' suffix dropped)."""
+    p = pd.read_csv(people_csv, dtype=str, usecols=["identifier", "name", "unique_name"]).fillna("")
+    return Counter(k for nm, un in zip(p["name"], p["unique_name"])
+                   for k in {" ".join(_tokens(n)).lower() for n in (nm, un) if n})
+
+
+def name_match(name: str, pool: dict[str, str], counts: Counter) -> str:
+    """Cricsheet id for a squad name among `pool` ({id: register name} of players who
+    appeared for the team or league). Needs exactly one hit, no register namesake,
+    and for an initials match no other pool player with that surname."""
+    q = _tokens(name)
+    hits = {i: k for i, n in pool.items() if (k := _name_kind(q, n))}
+    if len(hits) != 1:
+        return ""
+    i, kind = next(iter(hits.items()))
+    if counts[" ".join(_tokens(pool[i])).lower()] > 1:
+        return ""
+    if kind == "initial" and sum((_tokens(n) or [""])[-1].lower() == q[-1].lower() for n in pool.values()) > 1:
+        return ""
+    return i
+
+
+def team_pools(warehouse: str | Path) -> dict:
+    """{('international', team, gender) | ('franchise', league, gender): {id: register name}}."""
+    w = Path(warehouse)
+    players = pd.read_parquet(w / "players.parquet", columns=["player", "id", "name"])
+    apps = pd.read_parquet(w / "appearances.parquet", columns=["match_id", "team", "player"])
+    m = pd.read_parquet(w / "matches.parquet", columns=["match_id", "gender", "team_type", "event"])
+    a = apps.merge(m, on="match_id").merge(players, on="player").drop_duplicates(["id", "team", "event", "gender"])
+    pools: dict = {}
+    for r in a.itertuples():
+        key = ("international", str(r.team), r.gender) if r.team_type == "international" else \
+            ("franchise", str(r.event), r.gender)
+        pools.setdefault(key, {})[r.id] = r.name
+    return pools
+
+
+def dedupe(df: pd.DataFrame) -> pd.DataFrame:
+    """Drop a player listed twice for one team (same Cricsheet id or article)."""
+    ident = df["cricsheet_id"].where(df["cricsheet_id"] != "", "t:" + df["wikipedia_title"])
+    ident = ident.where(ident != "t:", "row:" + df.index.astype(str))
+    return df[~df[["level", "team", "competition", "gender"]].assign(_i=ident).duplicated()]
+
+
+# -------------------------------------------------------------------- run
 def run(wiki: Wiki, resolver: Resolver, out_dir: str | Path = "data/reference", *,
-        warehouse: str | Path | None = "data/warehouse") -> dict:
+        warehouse: str | Path | None = "data/warehouse", people_csv: str | Path = "data/raw/people.csv",
+        today: dt.date | None = None) -> dict:
+    today = today or dt.date.today()
     nat, nat_failed = national(wiki)
-    fr, fr_failed = franchise(wiki)
+    fr, fr_failed, roster = franchise(wiki, today)
     df = pd.DataFrame(nat + fr)
     for c in COLUMNS + EXTRA:
         if c not in df:
@@ -688,11 +922,32 @@ def run(wiki: Wiki, resolver: Resolver, out_dir: str | Path = "data/reference", 
     bad = df["wikipedia_title"].isin(not_player)
     df.loc[bad, "title_basis"] = "non-player link"
     df.loc[bad, "wikipedia_title"] = ""
+    people_ok = Path(people_csv).exists()
+    if people_ok:  # biographies without a Wikidata / {{Cricinfo}} id: profile URL in the text
+        cs_name = pd.read_csv(people_csv, dtype=str, usecols=["identifier", "name"]).fillna("")
+        cs_name = dict(zip(cs_name["identifier"], cs_name["name"]))
+        for t, p in ids.items():
+            if t not in not_player and not p.get("cricsheet_id") and not p.get("cricinfo"):
+                fid = fallback_cricsheet(p, resolver.by_cricinfo, cs_name)
+                if fid:
+                    p.update(cricsheet_id=fid, id_basis="cricinfo profile")
     df["cricsheet_id"] = df["wikipedia_title"].map(lambda t: (ids.get(t) or {}).get("cricsheet_id") or "")
+    df["id_basis"] = [((ids.get(t) or {}).get("id_basis") or "wikipedia") if c else ""
+                      for t, c in zip(df["wikipedia_title"], df["cricsheet_id"])]
     df["wikipedia_title"] = df["wikipedia_title"].map(lambda t: (ids.get(t) or {}).get("title") or t if t else "")
-    ts = timestamps(wiki, df["revid"].dropna().unique())
-    df["page_timestamp"] = df["revid"].map(lambda r: ts.get(int(r), "") if pd.notna(r) else "")
-    df["revid"] = df["revid"].map(lambda r: str(int(r)) if pd.notna(r) and r != "" else "")
+    if warehouse and people_ok and Path(warehouse, "appearances.parquet").exists():
+        pools, counts = team_pools(warehouse), register_counts(people_csv)
+        for i in df.index[df["cricsheet_id"] == ""]:
+            r = df.loc[i]
+            key = (r["level"], r["team"] if r["level"] == "international" else r["competition"], r["gender"])
+            cid = name_match(r["name"], pools.get(key, {}), counts)
+            if cid:
+                df.at[i, "cricsheet_id"], df.at[i, "id_basis"] = cid, "team name match"
+    n_before = len(df)
+    df = dedupe(df)
+    ts = timestamps(wiki, [r for r in df["revid"].unique() if r not in ("", None)])
+    df["page_timestamp"] = df["revid"].map(lambda r: ts.get(int(r), "") if r not in ("", None) else "")
+    df["revid"] = df["revid"].map(lambda r: str(int(r)) if r not in ("", None) else "")
     df = df[COLUMNS + EXTRA].fillna("").astype(str)
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
@@ -712,6 +967,14 @@ def run(wiki: Wiki, resolver: Resolver, out_dir: str | Path = "data/reference", 
         "source_kind": df.drop_duplicates(["level", "team", "competition", "gender"])["source_kind"]
         .value_counts().to_dict(),
         "failed": nat_failed + fr_failed,
+        "duplicates_dropped": n_before - len(df),
+        "id_basis": df.loc[df["cricsheet_id"] != "", "id_basis"].value_counts().to_dict(),
+        "status": df["status"].str.split(";").explode().loc[lambda s: s != ""].value_counts().to_dict(),
+        # lists the page itself dates more than a year back
+        "stale_as_of": sorted({f"{r.team}|{r.competition or '-'}|{r.gender}: {r.as_of}"
+                               for r in df[df["as_of"] != ""].itertuples()
+                               if r.as_of[:7] < (today - dt.timedelta(days=365)).isoformat()[:7]}),
+        "roster_check": roster,
         "captains": {},
     }
     for r in df[(df.level == "international") & (df.captain != "")].itertuples():

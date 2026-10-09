@@ -12,7 +12,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from .adjust import adjusted_values, codes, fit
+from .adjust import adjusted_values, codes, eb_lambda, fit
 from .context import home_teams
 from .frames import Warehouse
 from .runvalue import (FAMILY_BALLS, RunExpectancy, delivery_values, fit_run_expectancy,
@@ -120,9 +120,15 @@ def value_group(wh: Warehouse, group: str, scopes: list[str], re_models: dict,
                    "ctx": codes(sub["ctx"])[0]}
         f = fit(y[faced], factors)
         ba, bo = adjusted_values(y[faced], factors, f)
+        # Selection compares specialists, so the shrinkage used downstream is the
+        # empirical-Bayes penalty among top-seven batters (tail-enders widen the
+        # between-player spread and would make the penalty far too weak).
+        top = (sub["batter_pos"] <= 7).to_numpy()
+        lam_sel, _ = eb_lambda(ba[top].astype(np.float64), factors["batter"][top])
         bat_adj[faced], bowl_adj[faced] = ba, bo
         bt = pd.Series(f.coef["bowl_team"], index=pd.Categorical(sub["bowling_team"]).categories)
-        meta.update({"adjusted": True, "mu": round(f.mu, 4), "lambda_bat": round(f.lam_bat, 1),
+        meta.update({"adjusted": True, "mu": round(f.mu, 4), "lambda_bat": round(max(lam_sel, f.lam_bat), 1),
+                     "lambda_bat_fit": round(f.lam_bat, 1),
                      "lambda_bowl": round(f.lam_bowl, 1), "sigma2": round(f.sigma2, 4),
                      "ctx_levels": int(factors["ctx"].max() + 1),
                      "bowling_unit_effect": {k: round(float(v), 4) for k, v in bt.sort_values().items()}})

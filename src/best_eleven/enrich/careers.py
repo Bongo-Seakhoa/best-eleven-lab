@@ -3,7 +3,9 @@
 Cricsheet ball-by-ball coverage starts around 2002, so these lists are the only
 whole-career view of earlier players. One output row per (list, player): the
 player's cap number, first/last year and the batting, bowling and fielding
-totals exactly as the page shows them.
+totals exactly as the page shows them. Totals are for that team only: a player
+who also played for another side (e.g. the ICC World XI, so Kallis shows 13,206
+Test runs, not 13,289) has that record on the other side's list.
 
 Pages are discovered per (country, gender, format) from the usual title patterns
 ("List of South Africa ODI cricketers", "List of Australia women Twenty20
@@ -29,9 +31,21 @@ Conventions:
   * A body row with fewer cells than the header (a broken source row) keeps
     its values up to the first unreadable cell; later values are blanked
     because they have shifted into the wrong columns.
-  * A batting average that cannot be true (0 or above total runs when runs > 0)
-    is blanked. Averages that disagree with their own totals are kept as the
-    page shows them and noted.
+  * Values that cannot all be true together are blanked together and the
+    page's values named in parse_note: not-outs above innings, innings above
+    the matches allow, highest score above runs, runs above innings x highest
+    score, hundreds/fifties impossible with the highest score or runs, wickets
+    above balls, a best analysis beyond the career wickets or runs conceded.
+    Matches are never blanked. An average that cannot be true (0 with runs,
+    above total runs, positive with no runs, more dismissals than innings, a
+    bowling average with no wickets) is blanked on its own. Averages that only
+    disagree with their own totals are kept as the page shows them and noted.
+  * A table whose separate 100 and 50 columns hold each other's values (rows
+    impossible as labelled but not when swapped) is read swapped; a table that
+    mixes both orders keeps per row the only reading that fits and blanks the
+    pair where both fit. Recorded in parse_note and the page's
+    ``milestone_columns`` stat.
+  * Thousands separators must be well formed ("1,20" is unreadable).
   * Bare numeric name footnotes ("Kepler Wessels<sup>1</sup>", usually "also
     played for another team; only this country's record is given") are
     stripped from the name and noted.
@@ -41,16 +55,28 @@ Conventions:
     used only for ODI/T20I lists, where innings and match figures coincide.
   * Bowling strike rate and 4w/5w/10w columns are not carried.
 
+Identity: the name cell's link is followed to its canonical title (redirects
+resolved) and kept only when it is a cricketer biography (see is_player_page);
+links to list or team pages, disambiguations and namesakes are dropped and
+noted. Rows still without a Cricsheet id are matched by name_fallback against
+warehouse players of the same team, gender and format.
+
 Extra columns (after the specified ones):
   career_open    '1' when the page gives an open-ended career span.
   wikidata_qid   Wikidata item of the linked article (via the resolver).
   cricinfo_id    ESPNcricinfo player id used for the Cricsheet join.
+  id_basis       'link' (title -> Wikidata/ESPNcricinfo -> register), 'name'
+                 (name_fallback) or '' when cricsheet_id is blank.
+  page_markers   Marker kinds the list page uses ('captain;keeper', 'keeper',
+                 ...). A blank captain_marker/keeper_marker means "not marked"
+                 only for a kind named here; otherwise the page gives no answer.
   parse_note     '; '-joined notes on anything unread, blanked or inconsistent.
 """
 from __future__ import annotations
 
 import re
 import unicodedata
+from collections import Counter
 from pathlib import Path
 
 import pandas as pd
@@ -61,7 +87,7 @@ from .wiki import Resolver, Wiki, html_tables, title_from_url
 FULL_MEMBERS = ["Australia", "England", "South Africa", "India", "New Zealand", "Pakistan",
                 "Sri Lanka", "West Indies", "Bangladesh", "Zimbabwe", "Afghanistan", "Ireland"]
 ASSOCIATES = ["Scotland", "Netherlands", "United Arab Emirates", "Nepal", "Oman", "Namibia",
-              "United States of America", "Canada", "Kenya", "Hong Kong", "Papua New Guinea"]
+              "United States of America", "Canada", "Kenya", "Hong Kong", "Papua New Guinea", "Bermuda"]
 FORMATS = ["Test", "ODI", "T20I"]
 GENDERS = ["male", "female"]
 WIKI_COUNTRY = {"United States of America": ["United States", "United States of America", "USA"],
@@ -75,7 +101,7 @@ COLUMNS = ["country", "gender", "format", "cap", "name", "wikipedia_title", "cri
            "bat_avg", "balls_faced", "strike_rate", "hundreds", "fifties", "balls_bowled",
            "maidens", "runs_conceded", "wickets", "best_bowling", "bowl_avg", "economy",
            "catches", "stumpings", "captain_marker", "keeper_marker", "source_page", "revid",
-           "career_open", "wikidata_qid", "cricinfo_id", "parse_note"]
+           "career_open", "wikidata_qid", "cricinfo_id", "id_basis", "page_markers", "parse_note"]
 INT_FIELDS = {"cap", "matches", "innings", "not_outs", "runs", "balls_faced", "hundreds", "fifties",
               "balls_bowled", "maidens", "runs_conceded", "wickets", "catches", "stumpings"}
 DEC_FIELDS = {"bat_avg", "strike_rate", "bowl_avg", "economy"}
@@ -284,7 +310,10 @@ def to_number(v, integer: bool) -> str:
         if integer:
             return str(int(v)) if float(v).is_integer() else ""
         return format(float(v), ".10g")
-    s = clean_text(v).replace(",", "").strip(MARKERS + " {}|")
+    s = clean_text(v).strip(MARKERS + " {}|")
+    if "," in s and not re.fullmatch(r"\d{1,3}(?:,\d{3})+(?:\.\d+)?", s):
+        return ""  # malformed grouping ("1,20") is a typo, not a number
+    s = s.replace(",", "")
     if s.lower() in _DASHES:
         return ""
     if integer:
@@ -380,12 +409,65 @@ def _named(col) -> bool:
     return any(x and not x.startswith("unnamed:") for x in levels)
 
 
-def _checks(row: dict, notes: list[str]) -> None:
-    """Blank impossible batting averages; note averages that disagree with their totals."""
+def _int(row: dict, f: str) -> int | None:
+    v = (row.get(f) or "").rstrip("*")
+    return int(v) if v.isdigit() else None
+
+
+def _milestones_ok(h: int | None, f: int | None, hs: int | None, runs: int | None) -> bool:
+    """Can `h` hundreds and `f` fifties be true with this highest score and run total?"""
+    if h is None or f is None:
+        return True
+    if hs is not None and ((h > 0 and hs < 100) or (f > 0 and hs < 50)):
+        return False
+    return runs is None or 100 * h + 50 * f <= runs
+
+
+def _blank(row: dict, notes: list[str], fields: tuple[str, ...], why: str) -> None:
+    notes.append(f"{why}; " + " and ".join(f"{f} {row[f]}" for f in fields) + " blanked")
+    for f in fields:
+        row[f] = ""
+
+
+def _checks(row: dict, notes: list[str], fmt: str = "") -> None:
+    """Blank values that cannot all be true together, primary counts first, then
+    impossible averages; note averages that disagree with their totals."""
+    def n(f: str) -> int | None:
+        return _int(row, f)
+
+    mat = n("matches")
+    max_inn = None if mat is None else 2 * mat if fmt == "Test" else mat
+    if n("not_outs") is not None and n("innings") is not None and n("not_outs") > n("innings"):
+        _blank(row, notes, ("innings", "not_outs"), "not_outs above innings")
+    if n("innings") is not None and max_inn is not None and n("innings") > max_inn:
+        _blank(row, notes, ("innings",), f"innings above the possible {max_inn} for {mat} matches")
+    if n("high_score") is not None and n("runs") is not None and n("high_score") > n("runs"):
+        _blank(row, notes, ("high_score", "runs"), "high_score above runs")
+    bound = n("innings") if n("innings") is not None else max_inn
+    if None not in (bound, n("high_score"), n("runs")) and n("runs") > bound * n("high_score"):
+        _blank(row, notes, ("runs", "high_score"), f"runs above {bound} innings x high_score")
+    if not _milestones_ok(n("hundreds"), n("fifties"), n("high_score"), n("runs")):
+        _blank(row, notes, ("hundreds", "fifties"), "hundreds/fifties impossible with high_score and runs")
+    if n("wickets") is not None and n("balls_bowled") is not None and n("wickets") > n("balls_bowled"):
+        _blank(row, notes, ("wickets", "balls_bowled"), "wickets above balls_bowled")
+    m = re.fullmatch(r"(\d+)/(\d+)", row.get("best_bowling") or "")
+    if m and n("wickets") is not None and int(m.group(1)) > n("wickets"):
+        _blank(row, notes, ("best_bowling", "wickets"), "best_bowling wickets above career wickets")
+    elif m and n("runs_conceded") is not None and int(m.group(2)) > n("runs_conceded"):
+        _blank(row, notes, ("best_bowling", "runs_conceded"), "best_bowling runs above runs_conceded")
+    # averages are derived figures: only the average is dropped
     runs, avg = row.get("runs"), row.get("bat_avg")
-    if runs and avg and int(runs) > 0 and (float(avg) == 0 or float(avg) > int(runs)):
-        notes.append(f"bat_avg {avg} impossible with {runs} runs, blanked")
-        row["bat_avg"] = avg = ""
+    if runs and avg:
+        r, a = int(runs), float(avg)
+        bad = (r > 0 and (a == 0 or a > r)) or (r == 0 and a > 0)
+        if not bad and a > 0 and not row.get("innings") and max_inn is not None:
+            bad = r / (a + 0.005) > max_inn  # more dismissals than possible innings
+        if bad:
+            notes.append(f"bat_avg {avg} impossible with {runs} runs, blanked")
+            row["bat_avg"] = avg = ""
+    if row.get("bowl_avg") and row.get("wickets") == "0":
+        notes.append(f"bowl_avg {row['bowl_avg']} impossible with 0 wickets, blanked")
+        row["bowl_avg"] = ""
     inn, no = row.get("innings"), row.get("not_outs")
     if runs and avg and inn and no and int(inn) > int(no):
         exp = int(runs) / (int(inn) - int(no))
@@ -413,6 +495,7 @@ def parse_tables(tables, *, fmt: str) -> tuple[list[dict], dict]:
         n_named = sum(_named(c) for c in df.columns)
         j_name = fields.index("name")
         k = 0  # link-row cursor when pandas and link rows differ in count
+        table_rows = []
         for i in range(len(df)):
             raw = df.iloc[i].tolist()
             vals = {f: v for f, v in zip(fields, raw) if f}
@@ -464,9 +547,7 @@ def parse_tables(tables, *, fmt: str) -> tuple[list[dict], dict]:
                                  f"{p0 + 1} on blanked as shifted")
                 elif any(row.get(f) for f in _STAT_FIELDS):
                     notes.append(f"row has {n_cells} of {n_named} cells")
-            _checks(row, notes)
-            row["parse_note"] = "; ".join(notes)
-            stats["noted_rows"] += bool(notes)
+            row["_notes"] = notes
             if same_len:
                 aligned = len(links[i]) in (len(df.columns), n_named)
                 row["wikipedia_title"] = pick_link(links[i], j_name, name, aligned)
@@ -479,8 +560,49 @@ def parse_tables(tables, *, fmt: str) -> tuple[list[dict], dict]:
                         break
             if not aligned:
                 stats["unaligned_rows"] += 1
+            table_rows.append(row)
+        if "hundreds" in fields and "fifties" in fields:
+            mode = _orient_milestones(table_rows)
+            if mode:
+                stats.setdefault("milestone_columns", []).append(mode)
+        for row in table_rows:
+            notes = row.pop("_notes")
+            _checks(row, notes, fmt)
+            row["parse_note"] = "; ".join(notes)
+            stats["noted_rows"] += bool(notes)
             rows.append(row)
     return rows, stats
+
+
+def _orient_milestones(rows: list[dict]) -> str:
+    """Repair a table whose separate 100 and 50 columns hold each other's values.
+
+    'swapped': at least two rows are impossible as labelled and (almost) none when
+    read the other way round, so the whole table is read swapped. 'mixed': both
+    readings fail on a comparable number of rows, so each row keeps whichever
+    reading alone fits and is blanked when both fit. Rows that fit neither way
+    are left to _checks."""
+    def fits(r: dict, swap: bool) -> bool:
+        h, f = _int(r, "hundreds"), _int(r, "fifties")
+        return _milestones_ok(*((f, h) if swap else (h, f)), _int(r, "high_score"), _int(r, "runs"))
+
+    lab = sum(not fits(r, False) for r in rows)
+    swp = sum(not fits(r, True) for r in rows)
+    if lab < 2:
+        return ""
+    mode = "swapped" if swp <= lab // 10 else "mixed" if 4 * min(lab, swp) > max(lab, swp) else ""
+    for r in rows:
+        if not mode or r.get("hundreds") == r.get("fifties"):
+            continue
+        as_is, other = fits(r, False), fits(r, True)
+        if mode == "swapped" or (other and not as_is):
+            r["hundreds"], r["fifties"] = r.get("fifties", ""), r.get("hundreds", "")
+            r["_notes"].append(f"100 and 50 columns read swapped ({mode} table)")
+        elif as_is and other:
+            r["_notes"].append(f"hundreds {r['hundreds']} and fifties {r['fifties']} blanked: "
+                               "table mixes 100/50 column order")
+            r["hundreds"] = r["fifties"] = ""
+    return mode
 
 
 def parse_page(html: str, *, country: str, gender: str, fmt: str, source_page: str,
@@ -497,12 +619,13 @@ def parse_page(html: str, *, country: str, gender: str, fmt: str, source_page: s
     if wk_sym is None:
         wk_sym = "†"
         assumed += ["†"] if "†" in used else []
+    kinds = ";".join(k for k, s in (("captain", cap_sym), ("keeper", wk_sym)) if s in used)
     for r in rows:
         marks = r.pop("_marks")
         r["captain_marker"] = "1" if cap_sym in marks else ""
         r["keeper_marker"] = "1" if wk_sym in marks else ""
         r.update(country=country, gender=gender, format=fmt, source_page=source_page,
-                 revid=str(revid or ""))
+                 revid=str(revid or ""), page_markers=kinds)
     stats.update(legend=legend, legend_assumed=assumed, markers_seen=sorted(used))
     return rows, stats
 
@@ -565,6 +688,90 @@ def appearance_check(df: pd.DataFrame, warehouse: str | Path = "data/warehouse")
                                                "cricsheet_id"]].head(20).to_dict("records")}
 
 
+# --------------------------------------------------------------- identity
+PLAYER_RE = re.compile(r"\{\{\s*Infobox cricketer|\[\[Category:[^\]|]*cricketers[\]|]", re.I)
+LIST_CATEGORIES = ["Lists of Test cricketers", "Lists of One Day International cricketers",
+                   "Lists of Twenty20 International cricketers", "Lists of women Test cricketers",
+                   "Lists of women One Day International cricketers",
+                   "Lists of women Twenty20 International cricketers"]
+
+
+def is_player_page(page: dict) -> bool:
+    """Is a resolved link target a cricketer biography? List pages, team pages,
+    disambiguations and namesakes (no ESPNcricinfo id, no cricketer infobox or
+    category) are not."""
+    if not page.get("text") or re.match(r"Lists? of ", page.get("title") or ""):
+        return False
+    return bool(page.get("cricinfo")) or bool(PLAYER_RE.search(page["text"]))
+
+
+def _name_tokens(s: str) -> list[str]:
+    s = unicodedata.normalize("NFKD", re.sub(r"\(.*?\)", "", s or ""))
+    t = re.findall(r"[a-z]+", "".join(ch for ch in s if not unicodedata.combining(ch)).lower())
+    while len(t) > 1 and t[-1] in ("jr", "jnr", "sr", "snr"):
+        t.pop()
+    return t
+
+
+def name_fallback(df: pd.DataFrame, warehouse: str | Path, by_cricinfo: dict[int, str]) -> pd.Series:
+    """Cricsheet ids for unresolved rows, by name among warehouse players who appeared
+    for the same team, gender and format within the row's career years (+-1).
+
+    Accepted only when surname and first initial match exactly one such player whom
+    no linked row of the list already holds and no other row claims; a player whose
+    register ESPNcricinfo ids exclude the row's own id is refused."""
+    wh = Path(warehouse)
+    try:
+        players = pd.read_parquet(wh / "players.parquet", columns=["player", "id", "name"])
+        matches = pd.read_parquet(wh / "matches.parquet", columns=["match_id", "format", "gender", "team_type", "year"])
+        apps = pd.read_parquet(wh / "appearances.parquet", columns=["match_id", "team", "player"])
+    except (FileNotFoundError, OSError):
+        return pd.Series(dtype=str)
+    matches = matches[(matches["team_type"] == "international") & matches["format"].isin(FORMATS)]
+    a = apps.merge(matches, on="match_id").merge(players, on="player")
+    for c in ("team", "gender", "format"):
+        a[c] = a[c].astype(str)
+    span = a.groupby(["team", "gender", "format", "id", "name"])["year"].agg(["min", "max"]).reset_index()
+    pool = {k: list(g.itertuples(index=False)) for k, g in span.groupby(["team", "gender", "format"])}
+    cis: dict[str, set[str]] = {}
+    for ci, ident in by_cricinfo.items():
+        cis.setdefault(ident, set()).add(str(ci))
+    held = set(zip(df["country"], df["gender"], df["format"], df["cricsheet_id"]))
+    picks = {}
+    for i, r in df[(df["cricsheet_id"] == "") & (df["first_year"] != "")].iterrows():
+        key, t = (r["country"], r["gender"], r["format"]), _name_tokens(r["name"])
+        if len(t) < 2:
+            continue
+        lo, hi = int(r["first_year"]) - 1, int(r["last_year"] or 9998) + 1
+        hits = []
+        for c in pool.get(key, []):
+            ct = _name_tokens(c.name)
+            if (ct and ct[-1] == t[-1] and ct[0][0] == t[0][0] and lo <= c.min and c.max <= hi
+                    and key + (c.id,) not in held
+                    and not (r["cricinfo_id"] and cis.get(c.id) and r["cricinfo_id"] not in cis[c.id])):
+                hits.append(c.id)
+        if len(hits) == 1:
+            picks[i] = key + (hits[0],)
+    claims = Counter(picks.values())
+    return pd.Series({i: k[-1] for i, k in picks.items() if claims[k] == 1}, dtype=str)
+
+
+def unconfigured_lists(wiki: Wiki, covered: list[str]) -> list[str]:
+    """Career-list pages in Wikipedia's list categories that this run did not read
+    (teams outside FULL_MEMBERS + ASSOCIATES, e.g. World XI or East Africa)."""
+    pat = re.compile(r"^List of .+? (?:Test|ODI|One Day International|Twenty20 International) cricketers(?: \(.+\))?$")
+    out = set()
+    for cat in LIST_CATEGORIES:
+        cont: dict = {}
+        while True:
+            d = wiki.api(action="query", list="categorymembers", cmtitle=f"Category:{cat}", cmlimit="500", **cont)
+            out |= {m["title"] for m in d.get("query", {}).get("categorymembers", []) if pat.match(m["title"])}
+            if "continue" not in d:
+                break
+            cont = {"cmcontinue": d["continue"]["cmcontinue"]}
+    return sorted(out - set(covered))
+
+
 # --------------------------------------------------------------------- run
 def run(wiki: Wiki, resolver: Resolver, out_dir: str | Path = "data/reference", *,
         warehouse: str | Path = "data/warehouse") -> dict:
@@ -600,12 +807,24 @@ def run(wiki: Wiki, resolver: Resolver, out_dir: str | Path = "data/reference", 
     rows = uniq
     titles = sorted({r["wikipedia_title"] for r in rows if r["wikipedia_title"]})
     res = resolver.resolve_titles(titles)
+    rejected = set()
     for r in rows:
-        v = res.get(r["wikipedia_title"]) or {}
+        t, v = r["wikipedia_title"], res.get(r["wikipedia_title"]) or {}
+        if t and not is_player_page(v):
+            rejected.add(t)
+            note = f"name links to non-player page {v.get('title') or t!r}; link dropped"
+            r["parse_note"] = "; ".join(x for x in (r["parse_note"], note) if x)
+            r["wikipedia_title"], v = "", {}
+        elif t:
+            r["wikipedia_title"] = v.get("title") or t  # canonical title (redirects followed)
         r["cricsheet_id"] = v.get("cricsheet_id") or ""
         r["wikidata_qid"] = v.get("qid") or ""
         r["cricinfo_id"] = str(v["cricinfo"]) if v.get("cricinfo") else ""
+        r["id_basis"] = "link" if r["cricsheet_id"] else ""
     df = pd.DataFrame(rows).reindex(columns=COLUMNS).fillna("")
+    fb = name_fallback(df, warehouse, resolver.by_cricinfo)
+    df.loc[fb.index, "cricsheet_id"] = fb
+    df.loc[fb.index, "id_basis"] = "name"
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     df.to_csv(out / "careers_lists.csv", index=False, encoding="utf-8")
@@ -617,10 +836,13 @@ def run(wiki: Wiki, resolver: Resolver, out_dir: str | Path = "data/reference", 
         "lists": len(found),
         "pages": [{k: v for k, v in p.items() if k != "unparsed" or v} for p in pages],
         "missing_combos": missing,
+        "unconfigured_lists": unconfigured_lists(wiki, [p["page"] for p in pages]),
         "failed_pages": failed,
+        "rejected_links": sorted(rejected),
         "linked_rate": float(round(linked.mean(), 4)) if len(df) else None,
         "cricsheet_match_rate": float(round((df["cricsheet_id"] != "").mean(), 4)) if len(df) else None,
         "cricsheet_match_rate_linked": float(round((df.loc[linked, "cricsheet_id"] != "").mean(), 4)) if linked.any() else None,
+        "name_fallback_ids": len(fb),
         "cap_checks": checks.to_dict("records"),
         "appearance_check": appearance_check(df, warehouse),
     }
