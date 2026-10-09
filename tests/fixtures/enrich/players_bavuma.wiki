@@ -1,0 +1,99 @@
+{{Short description|South African cricketer (born 1990)}}
+{{Infobox cricketer
+| name = Temba Bavuma
+| image = Temba Bavuma 2025.png
+| caption = Bavuma in 2025
+| country = South Africa
+| full_name =
+| birth_date = {{Birth date and age|1990|5|17|df=y}}
+| birth_place = [[Cape Town]], Cape Province, [[South Africa]]<ref name="lad from Langa">{{cite web |url=https://example.org/bavuma |title=Lad from Langa}}</ref>
+| batting = Right-handed
+| bowling = Right-arm [[Fast bowling|medium]]
+| role = [[Batting order (cricket)#Middle order|Middle-order batter]]
+| international = true
+| internationalspan = 2014–present
+| testdebutdate = 26 December
+| testdebutyear = 2014
+| testdebutagainst = West Indies
+| testcap = 320
+| lasttestdate = 22 November
+| lasttestyear = 2025
+| lasttestagainst = India
+| odidebutdate = 25 September
+| odidebutyear = 2016
+| odidebutagainst = Ireland
+| odicap = 117
+| lastodidate = 27 September
+| lastodiyear = 2026
+| lastodiagainst = Australia
+| T20Idebutdate = 18 September
+| T20Idebutyear = 2019
+| T20Idebutagainst = India
+| T20Icap = 83
+| lastT20Idate = 3 September
+| lastT20Iyear = 2023
+| lastT20Iagainst = Australia
+| club1 = [[Gauteng (cricket team)|Gauteng]]
+| year1 = {{nowrap|2008/09–present}}
+| columns = 4
+| column1 = [[Test cricket|Test]]
+| matches1 = 66
+| runs1 = 3,810
+| bat avg1 = 38.10
+| 100s/50s1 = 4/26
+| top score1 = 172
+| deliveries1 = 96
+| wickets1 = 1
+| bowl avg1 = 61.00
+| fivefor1 = 0
+| tenfor1 = 0
+| best bowling1 = 1/29
+| catches/stumpings1 = 32/–
+| column2 = [[One Day International|ODI]]
+| matches2 = 57
+| runs2 = 2,168
+| bat avg2 = 43.36
+| 100s/50s2 = 6/8
+| top score2 = 144
+| deliveries2 = 37
+| wickets2 = 0
+| bowl avg2 = –
+| fivefor2 = –
+| tenfor2 = –
+| best bowling2 = –
+| catches/stumpings2 = 31/–
+| column3 = [[Twenty20 International|T20I]]
+| matches3 = 36
+| runs3 = 670
+| bat avg3 = 21.61
+| 100s/50s3 = 0/1
+| top score3 = 72
+| deliveries3 = –
+| wickets3 = –
+| bowl avg3 = –
+| fivefor3 = –
+| tenfor3 = –
+| best bowling3 = –
+| catches/stumpings3 = 27/–
+| column4 = [[First-class cricket|FC]]
+| matches4 = 180
+| runs4 = 10,342
+| bat avg4 = 38.44
+| 100s/50s4 = 18/57
+| top score4 = 180
+| deliveries4 = 500
+| wickets4 = 7
+| bowl avg4 = 46.42
+| fivefor4 = 0
+| tenfor4 = 0
+| best bowling4 = 2/34
+| catches/stumpings4 = 100/–
+| date = 4 October 2026
+| source = https://www.espncricinfo.com/player/temba-bavuma-372116 ESPNcricinfo
+}}
+'''Temba Bavuma''' (born 17 May 1990) is a South African [[cricket]]er who captains the national team.
+
+In September, South Africa toured Sri Lanka for three ODIs and three T20Is; in the opening match sustained an injury to his right thumb while batting and retired hurt.<ref>{{Cite web |title=Fractured thumb rules Bavuma out}}</ref>
+
+[[Category:1990 births]]
+[[Category:South Africa Test cricketers]]

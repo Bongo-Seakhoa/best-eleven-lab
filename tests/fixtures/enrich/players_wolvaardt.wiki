@@ -1,0 +1,35 @@
+{{Infobox Cricketer
+| name = Laura Wolvaardt
+| country = South Africa
+| birth_date = {{Birth date and age|1999|4|26|df=yes}}
+| batting = Right-handed
+| role = [[Batting (cricket)|Batter]]
+| international = true
+| internationalspan = 2016{{ndash}}present
+| female = true
+| testcap = 66
+| lasttestyear = 2024
+| odicap = 74
+| lastodiyear = 2026
+| T20Icap = 43
+| lastT20Iyear = 2026
+| columns = 3
+| column1 = [[Women's Test cricket|WTest]]
+| matches1 = 4
+| runs1 = 255
+| bat avg1 = 31.87
+| 100s/50s1 = 1/1
+| top score1 = 122
+| deliveries1 = –
+| catches/stumpings1 = 1/–
+| column2 = [[Women's One Day International|ODI]]
+| matches2 = 128
+| runs2 = 5,695
+| column3 = [[List A cricket|WLA]]
+| matches3 = 150
+| date = 27 April 2026
+}}
+'''Laura Wolvaardt''' (born 26 April 1999) is a South African cricketer.
+
+[[Category:South African women cricketers]]
+[[Category:South Africa women Test cricketers]]

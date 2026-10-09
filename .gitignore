@@ -4,9 +4,16 @@ __pycache__/
 *.egg-info/
 build/
 dist/
-data/
-*.sqlite*
-*.zip
+.ipynb_checkpoints/
 .env*
 !.env.example
-.ipynb_checkpoints/
+*.zip
+*.part
+# Pipeline outputs are rebuilt from Cricsheet by CI; reference snapshots are versioned.
+data/*
+!data/reference/
+site/data/
+node_modules/
+
+# scratch caches written by verification runs
+/-/

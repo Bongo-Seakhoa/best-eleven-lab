@@ -1,111 +1,133 @@
-"""Portable entry point: fetch → validate → analyse → select → inspect."""
+"""best-eleven: gather the data, run the pipeline, pick an eleven, serve the site."""
 from __future__ import annotations
+
 import argparse
-from dataclasses import asdict
-from datetime import date
-from pathlib import Path
+import functools
+import http.server
 import json
+import shutil
+import socketserver
+import subprocess
 import sys
-from .analytics import Scope, rankings, player_profile, coverage
-from .store import connect
-from .sources import SOURCES, fetch_source
-from .selection import Preferences, select_eleven, sensitivity, why_not
-from .util import dumps
+import webbrowser
+from pathlib import Path
+
+from . import pipeline as pl
+
+PRESETS = ["balanced", "quality", "form", "legacy", "experience"]
 
 
-def main(argv=None):
-    p = argparse.ArgumentParser(prog="best-eleven", description="Cricket selection and player diagnostics. National teams first.")
-    p.add_argument("--db", default="data/best-eleven.sqlite", help="Local SQLite path")
-    sub = p.add_subparsers(dest="command", required=True)
-    sub.add_parser("sources")
-    sub.add_parser("coverage")
-    demo = sub.add_parser("demo"); demo.add_argument("--matches-per-format", type=int, default=36)
-    fetch = sub.add_parser("fetch"); fetch.add_argument("source", choices=SOURCES); fetch.add_argument("--force", action="store_true")
-    ingest = sub.add_parser("ingest"); ingest.add_argument("archive"); ingest.add_argument("--source", required=True); ingest.add_argument("--provenance", required=True)
-    meta = sub.add_parser("metadata"); meta.add_argument("csv")
-    serve = sub.add_parser("serve"); serve.add_argument("--port", type=int, default=8765); serve.add_argument("--open", action="store_true")
-    for name in ("rank", "select", "profile", "sensitivity", "evaluate", "fantasy", "why-not", "export-preview"):
-        a = sub.add_parser(name)
-        a.add_argument("--format", choices=["Test", "ODI", "T20"], default="Test")
-        a.add_argument("--gender", choices=["male", "female"], default="male")
-        a.add_argument("--level", choices=["international", "club"], default="international")
-        a.add_argument("--competition", default=""); a.add_argument("--team", default="")
-        a.add_argument("--since", default="2000-01-01"); a.add_argument("--as-of", default=date.today().isoformat())
-        a.add_argument("--dataset", choices=["real", "demo"], default="real")
-        a.add_argument("--half-life-days", type=float, default=730)
-        a.add_argument("--output")
-        if name in {"select", "sensitivity", "why-not", "fantasy"}:
-            a.add_argument("--preferences", help="JSON file with Preferences fields")
-        if name in {"profile", "why-not"}:
-            a.add_argument("player_id")
-        if name == "fantasy":
-            a.add_argument("--rules", help="JSON FantasyRules file")
-    args = p.parse_args(argv)
-    try:
-        if args.command == "serve":
-            from .app import create_app
-            import uvicorn
-            if args.open:
-                import threading, webbrowser
-                threading.Timer(1, lambda: webbrowser.open(f"http://127.0.0.1:{args.port}")).start()
-            uvicorn.run(create_app(args.db), host="127.0.0.1", port=args.port)
-            return 0
-        db = connect(args.db)
-        if args.command == "sources":
-            result = [{**asdict(s), "url": s.url} for s in SOURCES.values()]
-        elif args.command == "demo":
-            from .demo import make_demo
-            result = make_demo(db, args.matches_per_format)
-        elif args.command == "fetch":
-            result = fetch_source(db, args.source, Path(args.db).parent / "raw", force=args.force)
-        elif args.command == "ingest":
-            from .sources import import_source_archive
-            result = import_source_archive(db, args.archive, args.source, args.provenance, Path(args.db).parent / "raw")
-        elif args.command == "metadata":
-            from .metadata import import_metadata
-            result = import_metadata(db, args.csv)
-        elif args.command == "coverage":
-            result = coverage(db)
-        else:
-            scope = Scope(**{k: getattr(args, k) for k in asdict(Scope())})
-            pref = Preferences(**json.loads(Path(args.preferences).read_text())) if getattr(args, "preferences", None) else Preferences(min_bowling_options=4 if scope.format == "Test" else 5)
-            if args.command == "evaluate":
-                from .evaluate import rolling_evaluate
-                result = rolling_evaluate(db, scope)
-            elif args.command == "export-preview":
-                from .preview import export_preview
-                result = export_preview(db, args.output or "best-eleven-preview.html", scope)
-            else:
-                ranking = rankings(db, scope)
-                if args.command == "rank":
-                    result = ranking
-                elif args.command == "select":
-                    result = select_eleven(ranking, pref)
-                elif args.command == "sensitivity":
-                    result = sensitivity(ranking, pref)
-                elif args.command == "profile":
-                    result = player_profile(db, scope, args.player_id, ranking)
-                elif args.command == "why-not":
-                    result = why_not(ranking, args.player_id, pref)
-                elif args.command == "fantasy":
-                    from .fantasy import FantasyRules, fantasy_projection, fantasy_captains
-                    rules = FantasyRules(**json.loads(Path(args.rules).read_text())) if args.rules else FantasyRules()
-                    projections = fantasy_projection(db, scope, rules)
-                    values = {r["player_id"]: r["expected_points"] for r in projections["players"]}
-                    xi = select_eleven(ranking, pref, fantasy_values=values)
-                    result = {"projections": projections, "selection": xi, "multipliers": fantasy_captains(xi["eleven"], values, rules)}
-        db.close()
-        text = dumps(result, indent=2)
-        if getattr(args, "output", None) and args.command != "export-preview":
-            out = Path(args.output); out.parent.mkdir(parents=True, exist_ok=True); out.write_text(text, encoding="utf-8")
-        else:
-            print(text)
-        if result.get("status") in {"partial", "infeasible"} if isinstance(result, dict) else False:
-            return 2
-        return 0
-    except (ValueError, TypeError, RuntimeError, OSError, KeyError) as exc:
-        print(f"best-eleven: {exc}", file=sys.stderr)
+def _select(args, p: pl.Paths) -> int:
+    node = shutil.which("node")
+    if not node:
+        print("`select` runs the site's selection engine and needs Node.js 18+ on PATH.", file=sys.stderr)
         return 2
+    scope_file = p.site_data / "scopes" / f"{args.scope}.json"
+    if not scope_file.exists():
+        print(f"No exported scope '{args.scope}'. Run `best-eleven build` first.", file=sys.stderr)
+        return 2
+    settings = {"scope": str(scope_file), "team": args.team, "from": args.from_year, "to": args.to_year,
+                "availability": args.availability, "preset": args.preset, "fullOnly": not args.all_nations,
+                "maxPerTeam": args.max_per_team, "maxOverseas": args.max_overseas}
+    out = subprocess.run([node, str(p.site / "cli" / "select.mjs"), json.dumps(settings)],
+                         capture_output=True, text=True)
+    if out.returncode:
+        print(out.stderr or out.stdout, file=sys.stderr)
+        return out.returncode
+    res = json.loads(out.stdout)
+    if args.json:
+        print(json.dumps(res, indent=1))
+        return 0
+    if "error" in res:
+        print(f"No eleven: {res['error']}", file=sys.stderr)
+        return 1
+    print(f"\n{res['title']}\n{res['subtitle']}\n")
+    for i, x in enumerate(res["xi"], 1):
+        tags = " ".join(t for t in (x["captain"] and "(c)", x["keeper"] and "(wk)") if t)
+        print(f"{i:>2}. {x['name']:<24} {x['slot']:<17} {x['team']:<22} {x['line']}  {tags}")
+    if res.get("note"):
+        print(f"\n{res['note']}")
+    return 0
+
+
+def _serve(args, p: pl.Paths) -> int:
+    handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=str(p.site))
+    with socketserver.TCPServer(("127.0.0.1", args.port), handler) as httpd:
+        url = f"http://127.0.0.1:{args.port}/"
+        print(f"Serving {p.site} at {url} (Ctrl+C to stop)")
+        if args.open:
+            webbrowser.open(url)
+        try:
+            httpd.serve_forever()
+        except KeyboardInterrupt:
+            pass
+    return 0
+
+
+def main(argv=None) -> int:
+    ap = argparse.ArgumentParser(prog="best-eleven", description=__doc__)
+    ap.add_argument("--root", default=".", help="project root (default: current directory)")
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    f = sub.add_parser("fetch", help="download Cricsheet's archive and people register (conditional)")
+    f.add_argument("--force", action="store_true")
+    sub.add_parser("ingest", help="archive -> Parquet warehouse")
+    e = sub.add_parser("enrich", help="refresh Wikipedia/Wikidata reference snapshots (network)")
+    e.add_argument("--refresh", action="store_true", help="ignore the HTTP cache")
+    sub.add_parser("model", help="run expectancy, adjusted values, aggregates, bowling-type model")
+    sub.add_parser("validate", help="reconciliation and predictive checks")
+    x = sub.add_parser("export", help="write site/data")
+    x.add_argument("--no-profiles", action="store_true")
+    sub.add_parser("build", help="ingest + model + validate + export (no network)")
+    a = sub.add_parser("all", help="fetch + ingest + enrich + model + validate + export")
+    a.add_argument("--skip-enrich", action="store_true")
+    s = sub.add_parser("select", help="pick a Best XI from the exported data")
+    s.add_argument("--scope", default="men-test", help="e.g. men-test, women-odi, ipl, sa20")
+    s.add_argument("--team", default=None, help="exact team name; omit for a World / league-wide XI")
+    s.add_argument("--from", dest="from_year", type=int, default=None)
+    s.add_argument("--to", dest="to_year", type=int, default=None)
+    s.add_argument("--availability", choices=["any", "active", "squad"], default="any")
+    s.add_argument("--preset", choices=PRESETS, default="balanced")
+    s.add_argument("--all-nations", action="store_true", help="include associate nations")
+    s.add_argument("--max-per-team", type=int, default=None)
+    s.add_argument("--max-overseas", type=int, default=None)
+    s.add_argument("--json", action="store_true")
+    v = sub.add_parser("serve", help="serve the site locally")
+    v.add_argument("--port", type=int, default=8765)
+    v.add_argument("--open", action="store_true")
+    args = ap.parse_args(argv)
+    p = pl.Paths(args.root)
+    if args.cmd == "fetch":
+        pl.fetch(p, force=args.force)
+    elif args.cmd == "ingest":
+        pl.ingest(p)
+    elif args.cmd == "enrich":
+        pl.enrich(p, refresh=args.refresh)
+    elif args.cmd == "model":
+        pl.model(p)
+    elif args.cmd == "validate":
+        report = pl.validate(p)
+        return 0 if all(c["passed"] for c in report["checks"]) else 1
+    elif args.cmd == "export":
+        pl.export(p, profiles=not args.no_profiles)
+    elif args.cmd in ("build", "all"):
+        if args.cmd == "all":
+            pl.fetch(p)
+        pl.ingest(p)
+        if args.cmd == "all" and not args.skip_enrich:
+            pl.enrich(p)
+        pl.model(p)
+        report = pl.validate(p)
+        pl.export(p)
+        failed = [c["name"] for c in report["checks"] if not c["passed"]]
+        if failed:
+            print("Validation failed: " + "; ".join(failed), file=sys.stderr)
+            return 1
+    elif args.cmd == "select":
+        return _select(args, p)
+    elif args.cmd == "serve":
+        return _serve(args, p)
+    return 0
+
 
 if __name__ == "__main__":
     raise SystemExit(main())
