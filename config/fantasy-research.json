@@ -1,0 +1,11 @@
+{
+  "name": "Research scoring, not an official platform",
+  "run": 1,
+  "four_bonus": 1,
+  "six_bonus": 2,
+  "wicket": 25,
+  "catch": 8,
+  "stumping": 12,
+  "captain_multiplier": 2,
+  "vice_captain_multiplier": 1.5
+}

@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "best-eleven-lab"
+version = "0.1.0"
+description = "Evidence-first cricket selection, national teams first."
+requires-python = ">=3.11"
+authors = [{name = "Bongo Kosa"}]
+license = {text = "MIT"}
+dependencies = ["numpy>=1.26,<3", "pandas>=2.1,<4", "scipy>=1.11,<2", "fastapi>=0.110,<1", "uvicorn>=0.29,<1"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8,<10", "httpx>=0.27,<1", "nbformat>=5,<6", "nbclient>=0.10,<1", "nbconvert>=7,<8", "ipykernel>=6,<8", "matplotlib>=3.8,<4"]
+
+ui = ["playwright>=1.45,<2"]
+
+[project.scripts]
+best-eleven = "best_eleven.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+best_eleven = ["web/*"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]

@@ -1,0 +1,28 @@
+name: Test the research prototype
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      matrix:
+        python: ['3.11', '3.13']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+      - run: python -m pip install -e '.[dev]'
+      - run: pytest -q
+      - run: best-eleven --db data/demo.sqlite demo
+      - run: best-eleven --db data/demo.sqlite select --dataset demo --format Test --team 'Cedar XI (demo)' --as-of 2026-10-09 --output results/demo-xi.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: synthetic-selection-python-${{ matrix.python }}
+          path: results/demo-xi.json
+          retention-days: 7
