@@ -14,7 +14,7 @@ from pathlib import Path
 
 from . import pipeline as pl
 
-PRESETS = ["balanced", "quality", "form", "legacy", "experience"]
+PRESETS = ["balanced", "quality", "form", "alltime", "legacy", "experience"]
 
 
 def _select(args, p: pl.Paths) -> int:

@@ -1,105 +1,167 @@
-# Methodology and model card
+# Methodology
 
-**Release:** 0.1 research prototype. **Evidence in the distributed preview:** fictional, seed 42. **Claim:** a runnable, auditable decision rule. **Not claimed:** a validated best team, a causal weakness, a complete career, or a probability of winning.
+How Best Eleven turns 11.7 million deliveries into a rating, a profile and an eleven. Numbers quoted here come from the October 2026 build; each build recomputes them.
 
-## 1. Population and time
+## 1. Data
 
-A scope fixes format, gender, team level, optional competition, candidate team, evidence start, exclusive as-of date and real versus synthetic provenance. Formats are never pooled. Matches must start on or after the start date and finish strictly before the as-of date. This avoids using the final innings of a Test that had not finished at the decision cutoff.
+**Matches.** Cricsheet's `all_json.zip` (schema 1.2 and 1.3) is ingested into a Parquet warehouse in one streaming pass. Each match is validated as a unit:
 
-Team filtering restricts both candidate identities and their reported team-specific performances. Peer comparisons can use all teams in the remaining scope. Loading only one country’s archive limits the peer population to that country and its opponents in those matches; fetch the wider format archive before interpreting the result internationally.
+- runs and extras must reconcile
+- a ball can't be both wide and no-ball
+- every person must be registered
+- batters must belong to the batting side
 
-Source roster membership is an appearance record, not automatic proof of a starting-XI slot, eligibility, availability or fitness. Supersubs and replacements can be included. The implementation does not infer injuries, citizenship, player availability or squad announcements.
+A failing match is quarantined with its reason rather than partly stored; the October build quarantined none. Five-ball overs (The Hundred) are supported. Super-over deliveries are kept but excluded from every rating.
 
-## 2. Accounting
+**Scopes.** Each match is assigned to one scope:
 
-The storage identity is `(match_id, innings_number, ordinal)`. An over/ball decimal is not a unique delivery identity when illegal deliveries or miscounted overs occur.
+- the six international formats: men's and women's Tests, ODIs and T20Is
+- one scope per mapped league ([config/competitions.json](../config/competitions.json))
+- `other` for everything else, which is stored but not rated
 
-Batter runs exclude extras. Balls faced exclude wides; the implementation counts non-wide no-balls as faced balls. Legal bowling balls exclude wides and no-balls. Bowler runs conceded are batter runs plus wides plus no-ball extras, excluding byes, leg-byes and penalty extras. Rate denominators always name which of these units is used.
+**Player database.** Wikipedia and Wikidata fill what match data cannot:
 
-Batting average = total batter runs / actual dismissals. A zero-dismissal denominator produces null, not a fabricated finite average. Run-outs count against the player actually dismissed, including a non-striker. Retired hurt and retired not out do not count as dismissals. Bowler credit includes bowled, caught, caught-and-bowled, lbw, stumped and hit wicket; it excludes run-out and retirement. Multiple wicket events on one delivery remain separate. A four or six completed by running is not counted as a boundary when the source flags `non_boundary`.
+- batting hand, bowling style, role and date of birth
+- full career totals
+- current national and franchise squads, with C/VC markers per format
+- reported retirements and come-backs
+- formal captaincy records
+- complete historic career lists for every national side
 
-Super-over deliveries are preserved but excluded from the normal analysis and fantasy aggregates. Pre- and post-innings penalty runs are stored separately. `info.missing` is retained as source metadata; a missing umpire, review or award does not cause valid deliveries to be discarded. Broader source completeness still needs an independent fixture/scorecard reconciliation.
+Identity runs from a Wikipedia title to a Wikidata item, then to an ESPNcricinfo id and Cricsheet's people register. Name matching is a fallback, accepted only within the team's own player pool. Every reference row keeps its source page and revision id.
 
-## 3. Recency and peer baselines
+## 2. Valuing a ball
 
-Each match observation has weight `w = 2^(-age_days / half_life_days)`. A half-life of zero assigns equal weights. Dates are measured from the match’s final recorded date.
+**Limited overs.** `RE(u, w)` is the expected number of further runs with `u` legal balls left and `w` wickets down. It is fitted from complete, full-length, non-D/L first innings with the Duckworth–Lewis form `Z0(w)·(1 − e^(−b(w)·u))`, separately for each wickets-lost level and era block (T20: to 2012, 2013–18, 2019–22, 2023+; ODI: to 2010, 2011–18, 2019+). It is then made monotone in wickets. Weighted RMSE against the raw cell means is 0.8 runs for men's T20 and 2.3 for ODIs.
 
-Batting baselines are grouped by five-year era, competition and observed batting-position band: opening (1–2), middle (3–5), lower middle (6–7), tail (8+). Bowling baselines use era and competition. A player’s own records are removed from their peer baseline. A cell with fewer than 200 peer batting/bowling balls or ten dismissals/wickets falls back to the broader peer pool. The output reports fallback-cell counts.
+A ball's *contest value* to the batting side is:
 
-The expected baseline for a player averages cell baselines using that player’s weighted exposure in each cell. This is a transparent first normalization, not a full causal or hierarchical era adjustment. Fallbacks can dilute era and role matching. Batting position comes from order of first observation, not a separately verified batting-order feed. Verify edge cases before using historical role claims.
+    batter runs + [RE(after the ball) − RE(before)]
 
-## 4. Performance scores
+The change in RE splits into the cost of using a legal ball and the cost of any wicket. The striker is charged for their own dismissal (including run-outs); a non-striker's run-out is charged to them separately. Wides and no-ball runs belong to the bowler alone. Byes and leg-byes cost the batter the ball but are charged to no one.
 
-Let `R`, `B`, `O` be recency-weighted batter runs, balls faced and dismissals. Let `r0` and `a0` be the player’s peer scoring-rate and batting-average baselines.
+**Tests.** There is no balls-remaining clock, so a ball is worth `runs − W(year) × dismissal`. Here `W` is that year's runs per dismissal (28.8 in 2001, 27.9 in 2026), which centres an average batter's ball at zero.
 
-```text
-rate_index    = ((R + k × r0) / (B + k)) / r0
-average_index = ((R + 5 × a0) / (O + 5)) / a0
-```
+## 3. Removing the opposition and the context
 
-The ball pseudo-count `k` is 360 for Test, 240 for ODI and 120 for T20. These are declared heuristic regularization strengths, not fitted optimal values.
+For each international format, and for men's and women's franchise cricket pooled across leagues, a ridge regression fits per-ball contest value on indicators for:
 
-For any positive relative index `x`:
+- batter and bowler
+- batting side and bowling side
+- context: year × phase × innings × home side (with competition added for the leagues)
 
-```text
-S(x) = clip(50 + 30 × tanh(log(max(x, 0.001)) / 0.65), 0, 100)
-```
+Penalties are empirical-Bayes: noise variance over between-player variance, estimated separately for batters and bowlers. A penalty of λ is the same as adding λ average balls to each record. Team effects are almost unpenalised. They carry the strength of a whole attack or batting order, which matters when a weak side's individual players are rarely seen elsewhere. Without them, associate batters facing other associates top the T20I lists.
 
-The bounded transform centers parity on 50 and limits the influence of extremes. Positive finite indices approach scores of 20 and 80, so this is not a percentile rank. Batting score blends `S(rate_index)` and `S(average_index)` with scoring-rate weights of 0.20 (Test), 0.45 (ODI) and 0.65 (T20).
+The adjusted value credited to a batter for one ball is:
 
-For bowling, the model regularizes runs conceded per legal ball and credited wickets per legal ball with the same format-specific `k`. Economy index is the peer concession rate divided by the regularized player concession rate. Wicket index is the regularized player wicket rate divided by the peer wicket rate. The wicket component has weight 0.75 in Test and 0.55 in ODI/T20; the remaining weight is economy.
+    observed value − (bowler effect + bowling-side effect + context effect)
 
-Raw statistics remain visible beside the scores. The indices are associations in observed matches; opposition quality, venue, pitch, match situation, ball age, home advantage and selection effects are not fully adjusted. A bowler’s batting score can look high relative to tail-order peers without implying specialist-batter quality. Roles therefore constrain slot eligibility. A score of zero internally denotes insufficient discipline evidence, and cannot fill a slot that needs that evidence; it is not a measured percentile of zero.
+Bowlers are treated the same way. Sums of these values are additive, so any window or team filter is a sum of season rows. Values are centred on an average Full-Member player facing Full-Member opposition.
 
-## 5. Experience, appointments and uncertainty
+The home side of a venue is the team that plays most often at that city (40% minimum share). Designated home grounds abroad therefore count as home, and neutral venues stay neutral.
 
-```text
-experience = min(100, 100 × log(1 + observed_matches) / log(151))
-leadership = min(100, 100 × log(1 + captain_matches + 0.5 × vice_captain_matches) / log(101))
-effective_matches = (sum(w))² / sum(w²)
-```
+| Fit group | Matches | Deliveries | Selection λ (batters) | λ (bowlers) |
+|---|---:|---:|---:|---:|
+| Men's Tests | 895 | 1,722,675 | 635 | 1,104 |
+| Men's ODIs | 2,589 | 1,373,116 | 594 | 1,199 |
+| Men's T20Is | 3,592 | 809,101 | 182 | 289 |
+| Women's ODIs | 614 | 321,871 | 248 | 970 |
+| Women's T20Is | 2,183 | 496,351 | 109 | 166 |
+| Men's franchise T20 | 6,804 | 1,570,992 | 618 | 660 |
+| Women's franchise T20 | 828 | 183,603 | 405 | 557 |
 
-Experience is explicitly exposure within the selected, available-record window, not complete lifetime experience. A limited source window can understate a long career. That limitation is not corrected by the logarithm. Leadership represents documented appointments, not effectiveness, tactical ability, psychological attributes or intrinsic value. Both appointment counts must be known for every eligible candidate before a nonzero leadership preference is allowed.
+Women's Tests (24 matches) are too few to adjust; their values are centred raw contest values.
 
-Metadata is scoped to format and team level and must have been observed before the as-of date, with a valid effective date. Most recent applicable rows replace older snapshots. The user must resolve conflicting sources: automatic source reliability adjudication and field-by-field merging are not implemented.
+**Why "selection λ".** Selection compares specialists, so the batting penalty used downstream is estimated among top-seven batters. Estimated over everyone, tail-enders stretch the spread of true ability and the penalty collapses to 119 balls in men's Tests. That once let a batter with 418 runs outrank established Test players.
 
-An optional sampling penalty is `caution × 15 / sqrt(1 + effective_matches / 10)`. It is a policy preference for more evidence, not a statistical confidence bound. Sampling already influences regularization, and experience overlaps with exposure; weighting all three strongly can reward longevity more than intended. Inspect sensitivity instead of assuming independent information.
+## 4. Scores
 
-Profile intervals use 250 deterministic bootstrap resamples of whole matches. Fewer than three match clusters yields no interval. Undefined denominators are recorded; if too many resamples have zero denominator, the upper endpoint is not supplied. Percentile intervals are exploratory, not simultaneous or family-wise guarantees. Serial dependence between matches, scheduling, source missingness and multiple comparisons remain material limitations.
+For a window `[from, to]` with optional recency half-life `h` (a season `t` years before the window end gets weight `0.5^(t/h)`), each player gets four components:
 
-## 6. Team optimization
+| Component | Batting | Bowling |
+|---|---|---|
+| Quality | Σ adjusted value ÷ (balls + λ); per innings in Tests, per 100 balls otherwise | −Σ adjusted cost ÷ (balls + λ), per 100 balls |
+| Legacy | Σ adjusted value over the window | −Σ adjusted cost |
+| Experience | Matches in the format up to the window end, plus caps before ball-by-ball coverage (from Wikipedia) | same |
+| Leadership | Matches formally captained in that format, plus half a match for a current vice-captaincy | same |
 
-The fixed template is two opener slots, three batter slots, one wicketkeeper, one flexible slot and four bowler slots. The opener count can be lowered, replacing opener slots with ordinary batter slots. Capability constraints additionally require six batting options and four bowling options in Test or five in limited overs by default. Pace/spin requirements, source-verified roles, dated availability, a budget and a maximum per team are optional.
+Quality and legacy are standardised against every qualified player of every team in the same window (50 is average, 15 points is one standard deviation), so a team XI and the World XI share one scale. Experience and leadership are log-scaled against the most experienced player and the longest-serving captain.
 
-Usage-based role inference needs minimum observed exposure. Batting eligibility uses at least 120/90/45 balls in Test/ODI/T20 and median position no worse than seven. Bowling eligibility uses 240/120/60 legal balls. An opener needs at least 35% of observed innings at positions one or two. Stumping evidence can identify a keeper, but a reviewed role record is preferable. Sourced role snapshots override inference; a role alone cannot create performance evidence.
+## 5. Roles
 
-For a player in a slot, quality is batting score for opener/batter/keeper, bowling score for bowler, and the stronger eligible discipline for the flexible slot. This is not an additive run-value model of all-round contribution; the current flexible slot can be a specialist when other capability requirements are met. Such a heuristic can undervalue moderate all-rounders relative to specialists. No claim of fully estimated team synergy is made.
+Roles come from the record within the window. Minimum evidence is sized for a six-year window and scales with the window length (between 0.35× and 2×); the "evidence bar" control multiplies it.
 
-```text
-utility = (performance_weight × slot_quality
-           + experience_weight × experience
-           + leadership_weight × leadership) / total_weight
-          - sampling_penalty
-```
+| Role | Rule |
+|---|---|
+| Opener | qualified batter, at least half of innings at 1–2 |
+| Top-order batter | qualified batter, at least 60% of innings at 1–6 |
+| Finisher (limited overs) | qualified batter, at least 60% of innings at 4 or lower |
+| Wicketkeeper | kept in at least 30% of matches (keeper inferred per match from stumpings and record) |
+| All-rounder | batting position 7.5 or higher on average, batting and bowling both at 60% of the bar, enough balls bowled per match |
+| Pace / spin bowler | qualified bowler of that family (Wikipedia style, or the classifier) |
 
-Binary assignment variables must fill every slot once and use every player at most once. Locks require inclusion; exclusions remove candidates. SciPy’s MILP interface solves the linear objective under those constraints. The result is accepted only when the solver reports optimality and a separate check verifies integrality, all constraints and eleven distinct identities. A timeout or infeasibility does not return a purportedly valid XI. The slot order is not a learned optimal batting order.
+Minimum balls at a 6-year window: Tests 500 batting / 900 bowling; ODIs 300 / 450; T20s 150 / 180.
 
-“Why not?” compares the current solution with one requiring the chosen candidate. Existing locks persist; the candidate’s own exclusion is removed for the alternative. The difference is utility, not runs or win probability. Four sensitivity scenarios vary the experience weight between 0, 10, 25 and 40 while setting performance to the complement and leadership to zero. Frequency across these scenarios is not a selection probability.
+## 6. The eleven
 
-## 7. Player profiles and archetypes
+Each player has a utility per eligible slot type:
 
-The full exposure table contains all recorded matchup deliveries, not just wickets. It reports balls faced, legal balls, all deliveries, runs, conceded runs, credited striker dismissals and distinct matches. Wicket rate in these tables is credited striker dismissals per 100 deliveries. The separate dismissal-type distribution is conditioned on actual dismissals and must not be treated as a matchup-risk estimator.
+    utility = Σ weight × component ÷ Σ weights
 
-Profiles include opponent, individual matchup, over band, season and venue cuts. Bowling-style and batting-hand cuts need source-attributed metadata; unknown is its own group. Applicable metadata at the analysis cutoff labels the historical deliveries; this is not a reconstructed delivery-date style history, so changing styles require additional temporal enrichment. The implemented batter archetypes in bowling profiles are observed batting-order bands. They are not stroke-technique, aggression, handedness or body-type inferences. Over bands are not necessarily official powerplays; Test over number is not ball age.
+The quality component depends on the slot:
 
-At least 60 deliveries and five matches are required to remove the sparse-evidence warning. That is a display rule, not proof of statistical significance. There is no automatic “weakest against” claim after searching many groups. Spatial advice is always unavailable with the standard input.
+- batting skill for batting slots
+- 85% batting and 15% keeping for the keeper
+- an even split of batting and bowling for all-rounders
+- bowling skill for bowlers
 
-## 8. Predictive diagnostic and fantasy
+The selector maximises total utility subject to:
 
-The separate rolling diagnostic fits past-only regularized batter runs per non-wide delivery and credited-dismissal probability. It evaluates run RMSE and wicket Brier score against a pooled past-only model over chronological folds. A Test cannot cross a training boundary. Unknown batters use the pooled prior. This diagnostic does **not** validate the XI utility model or the outcomes of unplayed teams. Hyperparameters are not tuned on its holdouts.
+- every slot filled
+- each player used once
+- locks honoured and exclusions removed
+- one optional group cap: either a maximum per country (World XIs) or a maximum number of overseas players (leagues)
 
-Fantasy uses explicit research point weights and a historical mean per roster appearance, including zero-contribution appearances. It is a baseline projection, not a calibrated next-match forecast. Fantasy captain multipliers are distinct from leadership metadata. The CLI selects an XI on base expected points and then allocates multipliers; it does not jointly optimize captain multipliers and XI membership under a platform’s full rules. Run-out shares, economy/strike-rate bonuses and official credits are not presumed.
+With one kind of group cap the problem is a network (source → group → player → slot type → sink), so successive shortest paths on a min-cost flow give the exact optimum. Locks are added as a bonus larger than any possible utility gap. Combining both caps breaks the network structure and is refused rather than approximated. [tests/test_solver_parity.py](../tests/test_solver_parity.py) checks 120 random instances against SciPy's MILP on every run.
 
-## 9. What must be validated on real records
+If the evidence bar leaves a slot without enough eligible players, it is lowered in steps (60%, 35%, 20%) and the page says so. The captain is the current captain (squad-page marker) with the most captaincy matches; otherwise the most experienced captain in the eleven. The gloves go to whoever in the eleven keeps most often. *Robustness* re-solves 20 times with every weight varied at random by up to ±25% and reports how often each player stays.
 
-Reconcile selected complete scorecards, including non-striker run-outs, no-balls, penalties, retirements and super overs. Check archive completeness against a fixture universe. Verify name/identity coverage, role sources, metadata dates and historical comparisons. Benchmark the scoring rule against simple baselines out of time, use a separate calibration period and report failed comparisons. Test source revisions and scale on actual full national archives. Obtain independent cross-provider review before calling the project accepted or production-ready.
+**League overseas limits** come from each league's rules, with sources in the config: IPL 4, SA20 4, BBL 3, PSL 4, CPL 4, WPL 5 (one of them from an Associate nation), WBBL 3, The Hundred 3. A player is overseas when their national side, from international appearances or Wikipedia, differs from the host country.
+
+**Availability.** *Current squad* means named in a current national or franchise squad on Wikipedia for that format. Sections older than 15 months and withdrawn players are ignored. *Active* means in a current squad, or played the format in the last 18 months (24 for Tests and leagues), and not reported retired from it. A later appearance overrides a retirement statement.
+
+## 7. All eras
+
+From Wikipedia's national player lists: Tests from 1877, ODIs from 1971, 11,601 career rows in total (including T20Is and women's lists). Careers are assigned to the decade of their midpoint. That decade's batting average (total runs over total dismissals across every list) and bowling average give the era baselines.
+
+- **Batting quality:** `(runs + 8 × era average) ÷ (dismissals + 8) ÷ era average`.
+- **Bowling quality:** the era bowling average divided by the player's average, shrunk with 10 (Tests) or 12 (ODIs) pseudo-wickets.
+- **Legacy:** runs above the era average and wickets × era bowling average − runs conceded.
+
+The lists carry no batting positions, so openers are not separated from the rest of the top order. World XIs default to Full-Member careers, because era adjustment cannot see opposition strength.
+
+## 8. Profiles
+
+Profiles exist for players with at least 300 balls faced or bowled in Tests (150 in ODIs, 90 in T20s, 75 in The Hundred) in some competition.
+
+**Splits.** Every split counts every ball faced or bowled, never dismissals alone. A batter caught often off one bowling type but scoring heavily against it is not mislabelled weak. Values are adjusted runs per 100 balls against an average player facing the same opponents, with a 95% interval.
+
+A split is flagged a strength or weakness only when it differs from the player's own overall level by more than 1.96 standard errors, with at least 300 / 150 / 90 balls. With several splits per player, about one flag in twenty can be chance, and the site says so.
+
+**Bowling types.** These come from the Wikipedia style, grouped as right-arm pace, left-arm pace, off-spin, leg-spin, left-arm orthodox and left-arm wrist-spin. A gradient-boosted classifier fills the gaps where Wikipedia has nothing. Its features are new-ball and death-over usage, how often the bowler opens, the mix of caught-behind, stumped, bowled and lbw dismissals, and wides and byes. Cross-validated it is 89% accurate (AUC 0.965); only predictions above 0.85 confidence are kept, and those are 94% accurate. Model labels are marked as such everywhere.
+
+**Batter types** (for bowlers' splits) are batting hand, batting-order band, and tempo: strike-rate tercile within the band.
+
+**Field plans** translate rates into a nine-fielder shape. Each rate is shrunk toward peers facing the same bowler family:
+
+- edges caught by the keeper
+- other catches
+- bowled plus lbw
+- stumpings
+- fours, sixes, and ones-to-threes
+
+The plan starts from a conventional base for the format, phase and bowler type, within the outfield limits. It then adds a catcher behind when edges run 20% above peers, adds or removes a boundary rider when boundary rates differ by 15%, and so on; each reason is listed with its index. Cricsheet records no shot or catch locations, so the counts come from data while the named positions follow convention, mirrored for left-handers.
+
+## 9. Validation
+
+[src/best_eleven/validate.py](../src/best_eleven/validate.py) runs on every build. The results are in [docs/ASSURANCE.md](ASSURANCE.md) and on the site's method page.

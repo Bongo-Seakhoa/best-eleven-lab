@@ -5,7 +5,8 @@ import { setQuery } from '../app.js';
 import { selectXI, whyNot, stability, defaultSlots, PRESETS, SLOT_TYPES } from '../engine/select.js';
 import { selectHistoric, HISTORIC_TEMPLATE } from '../engine/historic.js';
 import { FAMILY_RULES } from '../engine/metrics.js';
-import { icon, ROLE_ICON, fieldArt, bailsArt } from '../ui/icons.js';
+import { icon, ROLE_ICON } from '../ui/icons.js';
+import { teamLabel } from '../ui/teams.js';
 
 const COMPONENTS = [
   { key: 'quality', label: 'Quality', hint: 'Opposition- and era-adjusted output per ball (per innings for Test batting), shrunk for small samples', colour: 'var(--pitch)' },
@@ -82,7 +83,11 @@ export async function mount(root, route) {
     scope = await data.scope(scopeKey(st));
     const [y0, y1] = scope.years;
     if (st.to == null || st.to > y1 || st.to < y0) st.to = y1;
-    if (st.from == null || st.from < y0 || st.from > st.to) st.from = st.tier === 'league' ? y0 : Math.max(y0, st.to - 3);
+    if (st.from == null || st.from < y0 || st.from > st.to) {
+      st.from = st.tier === 'league' ? y0 : Math.max(y0, st.to - 3);
+      // A whole-history window opens on the all-time lens unless the user chose one.
+      if (st.from === y0 && st.lens === 'balanced') Object.assign(st, PRESETS.alltime.weights, { hl: 0, lens: 'alltime', av: 'any' });
+    }
     if (st.team && !scope.teams.includes(st.team)) st.team = '';
     if (st.tier === 'league' && st.mos == null) st.mos = scope.maxOverseas ?? null;
     if (!scope.availability.squads && st.av === 'squad') st.av = 'active';
@@ -147,7 +152,6 @@ export async function mount(root, route) {
       : `${scope.label}, ${st.from === st.to ? st.from : `${st.from}–${st.to}`} · ${PRESETS[st.lens]?.label ?? 'Custom'} lens`;
     hero.append(
       h('div.hero-text', h('div.eyebrow', 'Pick an XI'), h('h1.display', title), h('p.lede', sub)),
-      h('div.hero-art', fieldArt({ width: 300 })),
     );
   }
 
@@ -213,7 +217,7 @@ export async function mount(root, route) {
       rail.append(section('Window',
         h('div.chips', presets.map(([k, label, from]) => h('button.chip', { type: 'button',
           'aria-pressed': String(st.to === y1 && st.from === Math.max(y0, from)),
-          onclick: () => set({ from: Math.max(y0, from), to: y1, ...(k === 'all' && st.lens !== 'custom' ? { ...PRESETS.legacy.weights, hl: 0, lens: 'legacy' } : {}) }) }, label))),
+          onclick: () => set({ from: Math.max(y0, from), to: y1, ...(k === 'all' && st.lens !== 'custom' ? { ...PRESETS.alltime.weights, hl: 0, lens: 'alltime' } : {}) }) }, label))),
         h('div.year-range',
           h('div.field', h('label', { for: 'from' }, 'From'), h('select.select', { id: 'from', onchange: (e) => set({ from: +e.target.value }) },
             range(y0, st.to).map((y) => h('option', { value: y, selected: y === st.from }, y)))),
@@ -306,17 +310,23 @@ export async function mount(root, route) {
       notes.push('Career totals come from Wikipedia’s national player lists; batting positions are not recorded there, so openers are not separated from other top-order batters.');
     }
     if (result.error) {
-      board.append(h('div.notice.error.no-xi', bailsArt(), h('div', h('strong', 'No eleven fits these settings. '), result.error,
+      board.append(h('div.notice.error', h('div', h('strong', 'No eleven fits these settings. '), result.error,
         result.shortfall ? h('ul.small', result.shortfall.filter((s) => s.have < s.need).map((s) => h('li', `${SLOT_TYPES[s.type].label}: need ${s.need}, ${s.have} eligible`))) : null,
         h('p.small', 'Try a longer window, a lower evidence bar, “Everyone” availability, or fewer slots of the scarce type.'))));
       renderCandidates(board, result.pool || []);
       return;
     }
-    if (notes.length) board.append(h('div.notes', notes.map((n) => h('p.tiny.muted', n))));
+    if (result.relaxed) {
+      board.append(h('div.callout.caution', h('span.badge-ico', icon('warn', { size: 24 })),
+        h('div', h('div.k', 'Small sample caution'), h('div.t', 'Use with caution'),
+          h('p', `Not enough players met the evidence bar for every slot, so it was lowered to ${Math.round(result.relaxed * 100)}%. Some picks rest on thin records.`))));
+    }
+    const plain = notes.filter((n) => !n.startsWith('Not enough players'));
+    if (plain.length) board.append(h('div.notes', plain.map((n) => h('p.tiny.muted', n))));
 
     const summary = summarise(result);
     board.append(h('div.board-head',
-      h('div', h('div.eyebrow', 'The eleven'), h('div.small.muted', summary)),
+      h('div', h('div.rule-title.left', 'The eleven'), h('div.small.muted', { style: { marginTop: '8px' } }, summary)),
       st.mode === 'bbb' ? h('div.legend', COMPONENTS.map((c) => h('span.legend-item', h('span.swatch', { style: { background: c.colour } }), c.label))) : null));
 
     const list = h('ol.xi', { 'aria-label': 'Selected eleven in batting order' });
@@ -385,7 +395,7 @@ export async function mount(root, route) {
           isK ? h('span.badge.wk', { title: 'Wicketkeeper' }, icon('keeper', { size: 12 }), 'WK') : null,
           locked ? h('span.badge', icon('lock', { size: 12 }), 'Locked') : null),
         h('div.xi-meta', h('span.role-ico', { style: { color: SLOT_COLOUR[x.type] } }, icon(ROLE_ICON[x.type] || 'ball', { size: 16 })),
-          h('span', SLOT_TYPES[x.type]?.label ?? x.type), h('span.faint', '·'), h('span', tname),
+          h('span', SLOT_TYPES[x.type]?.label ?? x.type), h('span.faint', '·'), teamLabel(tname, { size: 16 }),
           st.mode === 'hist' ? h('span.faint', `· ${p.stats.span}`) : null),
         h('div.xi-stats.small', statLine(x))),
       h('div.xi-score',
@@ -405,7 +415,7 @@ export async function mount(root, route) {
       card.append(h('div.bench-type', h('div.tiny.eyebrow', SLOT_TYPES[t].label),
         alts.map((a) => h('div.bench-row',
           h('a', { href: `#/player/${a.player.id}` }, a.player.name),
-          h('span.faint.small', scope.teams[a.player.team] ?? ''),
+          h('span.faint.small', teamLabel(scope.teams[a.player.team] ?? '', { size: 14 })),
           h('span.num.small', { style: { marginLeft: 'auto' } }, fmt.score(a.u)),
           h('span.num.tiny', { style: { color: 'var(--weakness)', minWidth: '44px', textAlign: 'right' } }, fmt.signed(a.u - weakest)),
           h('button.btn.sm.ghost', { type: 'button', onclick: () => lock(a.player.id), 'aria-label': `Lock ${a.player.name} into the XI` }, icon('lock', { size: 14 }), 'Lock')))));
@@ -463,10 +473,10 @@ export async function mount(root, route) {
          ['Hundreds / fifties', `${s.hundreds} / ${s.fifties}`], ['Wickets', s.wkts], ['Bowling average', fmt.avg(s.bowlAvg)],
          ['Economy', s.econ?.toFixed(2) ?? '–'], ['Five-fors', s.fiveW], ['Catches / stumpings', `${s.catches} / ${s.stumpings}`],
          ['Usual position', s.posAvg ? s.posAvg.toFixed(1) : '–']];
-    d.body.append(h('div.stat-grid', [
-      ['Utility', fmt.score(x.u)], ['Bat quality', fmt.score(sc.batQ)], ['Bowl quality', fmt.score(sc.bowlQ)],
-      ['Experience', fmt.score(sc.exp)], ['Leadership', sc.lead == null ? '–' : fmt.score(sc.lead)],
-    ].map(([l, v]) => h('div.stat', h('div.stat-value', v), h('div.stat-label', l)))));
+    d.body.append(h('div.stat-cards', [
+      ['Utility', fmt.score(x.u), 'star'], ['Bat quality', fmt.score(sc.batQ), 'bat'], ['Bowl quality', fmt.score(sc.bowlQ), 'ball'],
+      ['Experience', fmt.score(sc.exp), 'calendar'], ['Leadership', sc.lead == null ? '–' : fmt.score(sc.lead), 'captain'],
+    ].map(([l, v, ic]) => h('div.stat-card', h('span.badge-ico', icon(ic, { size: 22 })), h('div', h('div.label', l), h('div.value', v))))));
     d.body.append(h('p.tiny.muted.mt', 'Scores are on a 0–100 scale where 50 is the average qualified player in this competition and window, and each 15 points is one standard deviation.'));
     d.body.append(h('table.data.mt', h('tbody', rows.map(([k, v]) => h('tr', h('td.muted', k), h('td.r', String(v)))))));
     if (st.mode === 'bbb') {
@@ -519,7 +529,7 @@ export async function mount(root, route) {
         h('tbody', shown.map((c) => h('tr', { class: chosen.has(c.id) ? 'is-selected' : '' },
           h('td', st.mode === 'bbb' || c.rec?.id ? h('a', { href: `#/player/${st.mode === 'bbb' ? c.id : c.rec.id}` }, c.name) : c.name,
             h('div.tiny.faint', [...c.roles].filter((r) => r !== 'bowler' || c.roles.size === 1).map((r) => SLOT_TYPES[r].short).join(' · '))),
-          h('td.small', teamName(c)),
+          h('td.small', teamLabel(teamName(c), { size: 16 })),
           h('td.r', c.stats.matches), h('td.r', fmt.n(c.stats.runs)), h('td.r', fmt.avg(c.stats.avg)),
           st.mode === 'bbb' ? h('td.r', fmt.sr(c.stats.sr)) : null,
           h('td.r', c.stats.wkts || '–'),

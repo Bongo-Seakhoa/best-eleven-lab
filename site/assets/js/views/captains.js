@@ -1,6 +1,7 @@
 // Captains: formal captaincy records from Wikipedia's captaincy lists, with a
 // sortable leaderboard and up to four captains compared side by side.
 import { h, clear, fmt, initials, tooltip, debounce } from '../ui/dom.js';
+import { teamLabel } from '../ui/teams.js';
 import * as data from '../data.js';
 import { resultBar } from '../ui/charts.js';
 import { setQuery } from '../app.js';
@@ -577,7 +578,7 @@ export async function mount(root, route) {
         h('div.cap-name-line', nameNode(c),
           c.flag ? tooltip(h('span.badge.bad.cap-flag', { tabindex: '0', 'aria-label': `Totals off: ${c.flag}` }, 'Totals off'), c.flag) : null),
       ),
-      h('td.small.cap-team', { title: c.teams.length > 2 ? teamText(c) : null }, teamText(c, 2)),
+      h('td.small.cap-team', { title: c.teams.length > 2 ? teamText(c) : null }, c.teams.length === 1 ? teamLabel(c.teams[0], { size: 16 }) : teamText(c, 2)),
       show.format ? h('td.small', c.fmtLabel) : null,
       h('td.small.cap-span', spanText(c)),
       h('td.r', fmt.n(c.played)),

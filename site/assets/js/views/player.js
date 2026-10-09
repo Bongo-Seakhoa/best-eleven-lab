@@ -1,6 +1,7 @@
 // Player profile: who they are, what Wikipedia says they have done, and where
 // the ball-by-ball record shows them strong or weak in each competition.
 import { h, clear, fmt, initials } from '../ui/dom.js';
+import { teamLabel } from '../ui/teams.js';
 import { divergingBars, seasonChart, compareDots, fieldPlan, percentile, resultBar } from '../ui/charts.js';
 import * as data from '../data.js';
 import { setQuery } from '../app.js';
@@ -120,7 +121,7 @@ export async function mount(root, route) {
     }
     if (!page.isConnected) return;
     clear(page);
-    document.title = `${p.name} · Best Eleven Lab`;
+    document.title = `${p.name} · Best Eleven`;
     const scopes = orderScopes(p, meta);
     const female = scopes.some((s) => (s.info?.gender || (s.key.includes('women') ? 'female' : '')) === 'female');
     page.append(hero(p, scopes, meta));
@@ -182,7 +183,7 @@ async function missing(page, id, err, retry) {
       h('p', 'There is not enough ball-by-ball evidence for a full profile of this player yet.'),
       labels.length ? h('p.small.muted', `Appears in: ${labels.join(', ')}.`) : null,
       h('div.row', h('a.btn.primary', { href: '#/players' }, 'Browse all players'))));
-    document.title = `${entry.n} · Best Eleven Lab`;
+    document.title = `${entry.n} · Best Eleven`;
     return;
   }
   if (is404) { notFound(page, id); return; }
@@ -234,6 +235,7 @@ function hero(p, scopes, meta) {
     : 'No competition in the archive holds enough of their deliveries for a profile.';
 
   const chips = [];
+  if (country) chips.push(h('span.pp-chip', teamLabel(country, { size: 16 })));
   if (p.hand === 'right' || p.hand === 'left') chips.push(h('span.pp-chip', `${cap(p.hand)}-hand bat`));
   const b = p.bowl || {};
   if (b.source === 'wikipedia' && b.label) chips.push(h('span.pp-chip', b.label));
@@ -692,7 +694,7 @@ function captaincyCard(p) {
         : null;
       const where = r.level === 'franchise' ? r.competition || 'Franchise' : 'International';
       return h('tr',
-        h('th', { scope: 'row' }, h('div', r.country_or_team || '–'),
+        h('th', { scope: 'row' }, h('div', r.country_or_team && !r.country_or_team.includes(';') ? teamLabel(r.country_or_team, { size: 16 }) : (r.country_or_team || '–')),
           h('div.tiny.faint', where, src ? ' · ' : '', src),
           r.page_total === 'mismatch' ? h('div.tiny.pp-warn', `Totals differ on the source page${r.page_total_detail ? `: ${r.page_total_detail}` : ''}`) : null),
         h('td', r.format || '–'), h('td', span),
@@ -721,7 +723,7 @@ function squadsCard(p) {
     h('tbody', rows.map((r) => {
       const capt = list(r.captain_formats), vice = list(r.vice_captain_formats);
       return h('tr',
-        h('th', { scope: 'row' }, r.team || '–'),
+        h('th', { scope: 'row' }, r.team ? teamLabel(r.team, { size: 16 }) : '–'),
         h('td', r.level === 'international' ? 'International' : r.competition || '–'),
         h('td', list(r.forms).join(', ') || '–'),
         h('td', r.contracted === '1' ? 'Yes' : r.contracted === '0' ? 'No' : '–'),

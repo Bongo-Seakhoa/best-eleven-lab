@@ -10,6 +10,7 @@ export const PRESETS = {
   balanced:   { label: 'Balanced',         weights: { quality: 80, legacy: 0, experience: 12, leadership: 8 }, halfLife: 3 },
   quality:    { label: 'Pure output',      weights: { quality: 100, legacy: 0, experience: 0, leadership: 0 }, halfLife: 0 },
   form:       { label: 'Current form',     weights: { quality: 85, legacy: 0, experience: 10, leadership: 5 }, halfLife: 1 },
+  alltime:    { label: 'All-time greats',  weights: { quality: 55, legacy: 35, experience: 10, leadership: 0 }, halfLife: 0 },
   legacy:     { label: 'Legacy',           weights: { quality: 30, legacy: 60, experience: 10, leadership: 0 }, halfLife: 0 },
   experience: { label: 'Big-match nous',   weights: { quality: 50, legacy: 0, experience: 30, leadership: 20 }, halfLife: 3 },
 };
@@ -127,8 +128,10 @@ export function selectXI(scope, settings) {
   let captain = null;
   // A current captain (squad page marker) leads when selected; otherwise the
   // most-capped captain in the eleven.
-  const current = scope.players.cc ? xi.find((x) => scope.players.cc[x.player.pi]) : null;
-  if (current && settings.availability !== 'any') captain = current.player.id;
+  const current = scope.players.cc ? xi.filter((x) => scope.players.cc[x.player.pi]) : [];
+  if (current.length && settings.availability !== 'any') {
+    captain = current.reduce((a, b) => ((b.player.sc.captMatches || 0) > (a.player.sc.captMatches || 0) ? b : a)).player.id;
+  }
   else if (scope.players.capt) {
     const withC = xi.filter((x) => (x.player.sc.captMatches || 0) > 0);
     if (withC.length) captain = withC.reduce((a, b) => (b.player.sc.captMatches > a.player.sc.captMatches ? b : a)).player.id;

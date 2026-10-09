@@ -1,6 +1,7 @@
 // Shell: hash router, theme, navigation, data-as-of badge.
 import { h, clear } from './ui/dom.js';
 import { icon } from './ui/icons.js';
+import { loadTeamIndex } from './ui/teams.js';
 import * as data from './data.js';
 
 const routes = {
@@ -9,6 +10,7 @@ const routes = {
   player: () => import('./views/player.js'),
   captains: () => import('./views/captains.js'),
   method: () => import('./views/method.js'),
+  credits: () => import('./views/credits.js'),
 };
 
 /** Parse "#/player/abc?x=1" -> {name: 'player', arg: 'abc', query: URLSearchParams} */
@@ -87,6 +89,14 @@ function initTheme() {
   });
 }
 
+const NAV_ICONS = { select: 'room', players: 'profile', captains: 'captain', method: 'database', credits: 'info' };
+function initNavIcons() {
+  for (const a of document.querySelectorAll('.nav a')) {
+    const name = NAV_ICONS[a.dataset.route];
+    if (name && !a.querySelector('.icon')) a.prepend(icon(name, { size: 17 }));
+  }
+}
+
 function initMenu() {
   const btn = document.getElementById('menu-toggle');
   const nav = document.getElementById('nav');
@@ -106,7 +116,8 @@ async function initAsOf() {
 }
 
 initTheme();
+initNavIcons();
 initMenu();
 initAsOf();
 window.addEventListener('hashchange', render);
-render();
+loadTeamIndex().finally(render);

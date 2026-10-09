@@ -1,0 +1,15 @@
+{
+ "spanMetres": 180.0,
+ "boundary": {
+  "rx": 68.0,
+  "ry": 72.0
+ },
+ "halfPitch": 10.06,
+ "circleRadius": 27.43,
+ "closeup": {
+  "span": 52.0,
+  "cx": 0.0,
+  "cy": -19.0
+ },
+ "note": "Image centre is the middle of the pitch; +y points to the top of the image (the bowler's end)."
+}

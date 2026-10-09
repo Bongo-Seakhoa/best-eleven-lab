@@ -1,0 +1,39 @@
+name: Refresh the player database
+# Re-reads Wikipedia and Wikidata (attributes, squads, captaincy, historic
+# careers, team images) and opens a pull request with whatever changed, so
+# every change to reference data is reviewed before it reaches the site.
+on:
+  workflow_dispatch:
+permissions:
+  contents: write
+  pull-requests: write
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - run: python -m pip install -e '.[dev]'
+      - run: best-eleven fetch
+      - run: best-eleven ingest
+      - name: Refresh reference snapshots and team images
+        run: best-eleven enrich --refresh
+      - run: pytest -q
+      - name: Open a pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          branch="reference-refresh-$(date -u +%Y%m%d)"
+          git checkout -b "$branch"
+          git add data/reference site/assets/img/teams
+          if git diff --cached --quiet; then echo "No changes"; exit 0; fi
+          git commit -m "Refresh player database from Wikipedia and Wikidata"
+          git push -u origin "$branch"
+          gh pr create --title "Refresh player database ($(date -u +%Y-%m-%d))" \
+            --body "Automated refresh of data/reference and team images. Review squad, retirement and captaincy changes before merging."

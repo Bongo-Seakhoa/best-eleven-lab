@@ -6,7 +6,7 @@ const opt = JSON.parse(process.argv[2]);
 const scope = JSON.parse(readFileSync(opt.scope, 'utf8'));
 const preset = PRESETS[opt.preset] ?? PRESETS.balanced;
 const to = opt.to ?? scope.years[1];
-const from = opt.from ?? (opt.preset === 'legacy' ? scope.years[0] : to - 3);
+const from = opt.from ?? (['legacy', 'alltime'].includes(opt.preset) ? scope.years[0] : to - 3);
 const team = opt.team ? scope.teams.indexOf(opt.team) : null;
 if (opt.team && team < 0) {
   process.stdout.write(JSON.stringify({ error: `Unknown team "${opt.team}". Teams: ${scope.teams.join(', ')}` }));

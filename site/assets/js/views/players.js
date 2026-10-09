@@ -1,5 +1,6 @@
 // Player directory: search and filter every profiled player, entirely in memory.
 import { h, s, clear, fmt, initials, debounce } from '../ui/dom.js';
+import { teamBadge } from '../ui/teams.js';
 import * as data from '../data.js';
 import { setQuery } from '../app.js';
 
@@ -554,7 +555,7 @@ function directory(page, P, route, isAlive) {
     const facts = !e.countries.length && !e.role
       ? h('div.pl-fact', h('span.faint', 'Country and role not recorded'))
       : h('div.pl-fact',
-        e.countries.length ? h('span', e.countryLabel) : h('span.faint', 'Country not recorded'),
+        e.countries.length ? h('span.team-label', e.countries.map((c) => teamBadge(c, { size: 16 })), e.countryLabel) : h('span.faint', 'Country not recorded'),
         sep(),
         e.role ? h('span', cap(e.role)) : h('span.faint', 'Role not recorded'));
     const el = h('article.pl-card', delayIndex >= 0 ? { class: 'fade-in', style: { animationDelay: `${Math.min(delayIndex, 12) * 18}ms` } } : null,

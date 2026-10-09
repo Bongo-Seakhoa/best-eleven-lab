@@ -1,4 +1,4 @@
-name: Test the research prototype
+name: Tests
 on:
   push:
   pull_request:
@@ -8,21 +8,17 @@ jobs:
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    strategy:
-      matrix:
-        python: ['3.11', '3.13']
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: ${{ matrix.python }}
+          python-version: '3.12'
           cache: pip
-      - run: python -m pip install -e '.[dev]'
-      - run: pytest -q
-      - run: best-eleven --db data/demo.sqlite demo
-      - run: best-eleven --db data/demo.sqlite select --dataset demo --format Test --team 'Cedar XI (demo)' --as-of 2026-10-09 --output results/demo-xi.json
-      - uses: actions/upload-artifact@v4
+      - uses: actions/setup-node@v4
         with:
-          name: synthetic-selection-python-${{ matrix.python }}
-          path: results/demo-xi.json
-          retention-days: 7
+          node-version: '20'
+      - run: python -m pip install -e '.[dev]'
+      - name: Python tests (network-free; includes the JS solver vs MILP parity check)
+        run: pytest -q
+      - name: JavaScript syntax
+        run: find site -name '*.js' -o -name '*.mjs' | xargs -n1 node --check

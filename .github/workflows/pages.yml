@@ -1,0 +1,53 @@
+name: Build and publish the site
+# Rebuilds every number on the site from Cricsheet's latest archive, runs the
+# validation checks, and publishes to GitHub Pages only if they all pass.
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '17 4 * * 1'   # Mondays 04:17 UTC, after Cricsheet's weekend updates
+  workflow_dispatch:
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+concurrency:
+  group: pages
+  cancel-in-progress: false
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - run: python -m pip install -e .
+      - name: Restore the last downloaded archive
+        uses: actions/cache@v4
+        with:
+          path: data/raw
+          key: cricsheet-${{ github.run_id }}
+          restore-keys: cricsheet-
+      - name: Fetch Cricsheet (conditional download)
+        run: best-eleven fetch
+      - name: Ingest, model, validate, export
+        run: best-eleven build
+      - name: Publish the validation report with the build log
+        if: always()
+        run: cat data/model/validation.json || true
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

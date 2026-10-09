@@ -71,90 +71,14 @@ export function icon(name, { size = 18, label = null, cls = '' } = {}) {
 export const ROLE_ICON = { opener: 'opener', batter: 'bat', finisher: 'finisher', keeper: 'keeper',
                            allrounder: 'allrounder', pace: 'pace', spin: 'spin', bowler: 'bowler' };
 
-/** The brand mark: the numeral 11 in a gold-ruled square, as on the brand board. */
-export function logoMark(size = 36) {
-  const el = s('svg', { viewBox: '0 0 64 64', width: size, height: size, 'aria-hidden': 'true', class: 'logo-mark' });
-  el.innerHTML = MARK_SVG;
-  return el;
-}
-
+/** The brand mark: the numeral 11 in a gold-ruled square. */
 export const MARK_SVG = `<rect width="64" height="64" rx="3" fill="var(--logo-bg, #173d2c)"/>
   <rect x="5" y="5" width="54" height="54" fill="none" stroke="var(--logo-seam, #c9aa6c)" stroke-width="1.6"/>
   <text x="32" y="46" text-anchor="middle" font-family="Fraunces, Georgia, 'Times New Roman', serif" font-weight="600"
         font-size="38" letter-spacing="-2.5" fill="var(--logo-ink, #dcc38f)">11</text>`;
 
-/** Brand-board pitch: a square of turf with the strip and creases. */
-export function pitchArt(size = 160) {
-  const el = s('svg', { viewBox: '0 0 160 140', width: size, 'aria-hidden': 'true', class: 'pitch-art' });
-  el.innerHTML = `<rect width="160" height="140" rx="6" fill="var(--logo-bg, #173d2c)"/>
-    <rect x="14" y="14" width="132" height="112" fill="none" stroke="#f3ead2" stroke-opacity=".75" stroke-width="1.2"/>
-    <rect x="30" y="38" width="100" height="64" fill="none" stroke="#f3ead2" stroke-opacity=".55" stroke-dasharray="4 4"/>
-    <rect x="68" y="26" width="24" height="88" fill="#d9c08a"/>
-    <path d="M68 38h24M68 102h24" stroke="#173d2c" stroke-width="1.2"/>
-    <path d="M74 14v18M80 14v18M86 14v18M74 108v18M80 108v18M86 108v18" stroke="#f3ead2" stroke-width="2"/>`;
-  return el;
-}
-
-/** Brand-board ground: a round field, the inner ring and a few fielders. */
-export function groundArt(size = 180) {
-  const el = s('svg', { viewBox: '0 0 180 180', width: size, 'aria-hidden': 'true', class: 'ground-art' });
-  const dots = [[90, 38], [134, 62], [142, 104], [90, 142], [38, 104], [46, 62]];
-  el.innerHTML = `<circle cx="90" cy="90" r="88" fill="var(--logo-bg, #173d2c)"/>
-    <circle cx="90" cy="90" r="76" fill="none" stroke="#f3ead2" stroke-opacity=".55" stroke-width="1.2"/>
-    <circle cx="90" cy="90" r="52" fill="none" stroke="#f3ead2" stroke-opacity=".7" stroke-dasharray="3 5"/>
-    <circle cx="90" cy="90" r="17" fill="none" stroke="#f3ead2" stroke-opacity=".35"/>
-    <rect x="85" y="76" width="10" height="28" rx="1.5" fill="#d9c08a"/>
-    ${dots.map(([x, y], i) => `<circle class="fa-dot" style="--d:${i * 80}ms" cx="${x}" cy="${y}" r="4.2" fill="#f3ead2"/>`).join('')}`;
-  return el;
-}
-
-/** Brand-board ball: deep red leather, raised seam, soft highlight. */
-export function ballArt(size = 120) {
-  const el = s('svg', { viewBox: '0 0 120 120', width: size, 'aria-hidden': 'true', class: 'ball-art' });
-  el.innerHTML = `<defs>
-      <radialGradient id="ba-l" cx=".36" cy=".32" r=".75"><stop offset="0" stop-color="#c0392f"/><stop offset=".55" stop-color="#8f1d1d"/><stop offset="1" stop-color="#5a0f12"/></radialGradient>
-    </defs>
-    <circle cx="60" cy="60" r="56" fill="url(#ba-l)"/>
-    <path d="M30 96C52 80 82 48 94 22M36 102C58 86 88 54 100 28" fill="none" stroke="#f1dcc0" stroke-width="2.2" stroke-linecap="round" opacity=".9"/>
-    <path d="M33 92l4 5M40 86l4 5M47 80l4 5M54 73l4 5M61 66l4 5M68 58l4 5M75 50l4 5M82 41l4 5M89 32l4 5" stroke="#f1dcc0" stroke-width="1.6" stroke-linecap="round" opacity=".8"/>
-    <ellipse cx="42" cy="34" rx="16" ry="9" fill="#fff" opacity=".12" transform="rotate(-30 42 34)"/>`;
-  return el;
-}
-
-/** Decorative oval with mown stripes, the 30-yard circle, a pitch and eleven fielders. */
-export function fieldArt({ width = 420, title = null } = {}) {
-  const el = s('svg', { viewBox: '0 0 420 320', width, class: 'field-art', 'aria-hidden': title ? null : 'true',
-                        role: title ? 'img' : null, 'aria-label': title });
-  const fielders = [[210, 196], [197, 214], [223, 214], [244, 206], [270, 160], [262, 104], [176, 92], [128, 140],
-                    [150, 222], [312, 248], [96, 248]];
-  el.innerHTML = `
-    <defs>
-      <clipPath id="fa-oval"><ellipse cx="210" cy="160" rx="196" ry="146"/></clipPath>
-      <radialGradient id="fa-glow" cx=".5" cy=".45" r=".6"><stop offset="0" stop-color="var(--pitch-2)" stop-opacity=".22"/><stop offset="1" stop-color="var(--pitch)" stop-opacity=".05"/></radialGradient>
-    </defs>
-    <ellipse cx="210" cy="160" rx="196" ry="146" fill="url(#fa-glow)" stroke="var(--pitch)" stroke-opacity=".35" stroke-width="1.5"/>
-    <g clip-path="url(#fa-oval)" fill="var(--pitch)" opacity=".07">
-      ${Array.from({ length: 11 }, (_, i) => `<rect x="${14 + i * 36}" y="0" width="18" height="320"/>`).join('')}
-    </g>
-    <ellipse cx="210" cy="160" rx="104" ry="80" fill="none" stroke="var(--pitch)" stroke-opacity=".45" stroke-width="1.3" stroke-dasharray="4 6"/>
-    <rect x="202" y="112" width="16" height="96" rx="2" fill="var(--gold-soft)" stroke="var(--gold)" stroke-opacity=".55"/>
-    <path d="M198 124h24M198 196h24" stroke="var(--gold)" stroke-opacity=".6"/>
-    <path d="M210 118 C 236 150, 300 210, 330 246" fill="none" stroke="var(--ball)" stroke-width="1.6" stroke-dasharray="2 5" stroke-linecap="round" opacity=".7"/>
-    <circle cx="330" cy="246" r="4.5" fill="var(--ball)"/>
-    ${fielders.map(([x, y], i) => `<g class="fa-dot" style="--d:${i * 70}ms"><circle cx="${x}" cy="${y}" r="7.5" fill="var(--surface)" stroke="var(--pitch)" stroke-width="2"/><circle cx="${x}" cy="${y}" r="3" fill="var(--pitch)"/></g>`).join('')}`;
-  return el;
-}
-
-/** Shown when no eleven fits: stumps with the bails flying. */
-export function bailsArt() {
-  const el = s('svg', { viewBox: '0 0 120 90', width: 120, 'aria-hidden': 'true', class: 'bails-art' });
-  el.innerHTML = `
-    <path d="M40 84V36M60 84V36M80 84V36" stroke="var(--gold)" stroke-width="5" stroke-linecap="round"/>
-    <path d="M36 82h48" stroke="var(--line)" stroke-width="3" stroke-linecap="round"/>
-    <rect x="30" y="18" width="18" height="5" rx="2.5" fill="var(--gold)" transform="rotate(-28 39 20)"/>
-    <rect x="66" y="10" width="18" height="5" rx="2.5" fill="var(--gold)" transform="rotate(22 75 12)"/>
-    <circle cx="96" cy="44" r="7" fill="var(--ball)"/>
-    <path d="M93 39c1.6 3 1.6 7 0 10" stroke="var(--surface)" stroke-width="1.2" stroke-dasharray="1.4 1.4" fill="none"/>
-    <path d="M18 30l6 3M14 44h7M20 56l5-3" stroke="var(--muted)" stroke-width="2" stroke-linecap="round"/>`;
+export function logoMark(size = 36) {
+  const el = s('svg', { viewBox: '0 0 64 64', width: size, height: size, 'aria-hidden': 'true', class: 'logo-mark' });
+  el.innerHTML = MARK_SVG;
   return el;
 }

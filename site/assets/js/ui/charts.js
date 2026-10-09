@@ -21,8 +21,12 @@ function frame(w, hgt, label) {
 export function divergingBars(rows, opts = {}) {
   const W = 640, rowH = 34, top = 26, left = 190, right = 64;
   const H = top + rows.length * rowH + 8;
-  const vals = rows.flatMap((r) => [r.value, r.lo, r.hi]).filter((x) => x != null && Number.isFinite(x));
-  const m = Math.max(5, ...vals.map(Math.abs)) * 1.08;
+  // Scale to the estimates; very wide intervals from thin samples are clipped
+  // (at 2.5x the largest estimate) rather than allowed to flatten every bar.
+  const ests = rows.map((r) => r.value).filter((x) => x != null && Number.isFinite(x));
+  const vMax = Math.max(4, ...ests.map(Math.abs));
+  const ci = rows.flatMap((r) => [r.lo, r.hi]).filter((x) => x != null && Number.isFinite(x)).map(Math.abs);
+  const m = Math.min(Math.max(vMax, ...ci), vMax * 2.5) * 1.08;
   const x = (v) => left + ((v + m) / (2 * m)) * (W - left - right);
   const svg = frame(W, H, opts.label || `Chart of ${opts.unit || 'values'}`);
   svg.append(s('line', { x1: x(0), x2: x(0), y1: 14, y2: H - 4, stroke: C.line, 'stroke-width': 1.5 }));
@@ -127,38 +131,132 @@ export function compareDots(rows, opts = {}) {
   return h('figure.chart-fig', svg, legend);
 }
 
+// Fielding positions in metres for a right-hander: x towards the off side, y
+// from the striker's stumps towards the bowler. Deep positions are pushed out
+// to just inside the rope of the rendered ground.
+const POS_M = {
+  'Wicketkeeper': [0, -15], '1st slip': [2.2, -15.6], '2nd slip': [4.4, -15.4], '3rd slip': [6.6, -14.8],
+  '4th slip': [8.7, -14], 'Gully': [12.5, -10.5], 'Leg slip': [-3.2, -13.5], 'Short leg': [-4.6, 3.8],
+  'Silly point': [4.6, 3.8], 'Short mid-wicket': [-9.5, 9], 'Point': [24, 1], 'Cover': [23, 15],
+  'Extra cover': [15.5, 23], 'Mid-off': [7.5, 28], 'Mid-on': [-7.5, 28], 'Mid-wicket': [-23, 15],
+  'Square leg': [-25, 0], 'Short fine leg': [-15, -19], 'Short third man': [15, -20],
+  'Third man': [40, -48], 'Deep point': [62, 2], 'Deep cover': [52, 36], 'Long-off': [22, 66],
+  'Long-on': [-22, 66], 'Deep mid-wicket': [-52, 36], 'Deep square leg': [-62, 2], 'Fine leg': [-40, -48],
+  'Cow corner': [-46, 54],
+};
+const SHORT = { '1st slip': '1st', '2nd slip': '2nd', '3rd slip': '3rd', '4th slip': '4th',
+                'Short mid-wicket': 'Short mid-wkt', 'Short third man': 'Short 3rd man' };
+const GROUND = { rx: 68, ry: 72, half: 10.06 };   // matches assets/img/ground/field.json
+const VIEW = 156;                                  // metres shown across the plan
+
+function groundXY(name, hand, zone, keeperUp) {
+  let [x, y] = name === 'Wicketkeeper' && keeperUp ? [0.4, -1.6] : (POS_M[name] || [0, 0]);
+  y -= GROUND.half;                                // ground centre is mid-pitch
+  if (zone === 'deep') {
+    const r = Math.hypot(x / GROUND.rx, y / GROUND.ry) || 1;
+    x *= 0.92 / r; y *= 0.92 / r;
+  }
+  return [hand === 'left' ? -x : x, y];
+}
+
+const SPAN = 180;                                  // metres covered by the full-ground image
+const CLOSEUP = { span: 52, cx: 0, cy: -19 };      // high-resolution render of the striker's end
+
+function groundImages(view, cx = 0, cy = 0) {
+  // Scale the image so `view` metres fill the stage, then shift it so ground
+  // point (cx, cy) sits in the middle. Small views use the close-up render.
+  const close = view <= CLOSEUP.span * 0.9
+    && Math.abs(cx - CLOSEUP.cx) + view / 2 <= CLOSEUP.span / 2 && Math.abs(cy - CLOSEUP.cy) + view / 2 <= CLOSEUP.span / 2;
+  const span = close ? CLOSEUP.span : SPAN, ox = close ? CLOSEUP.cx : 0, oy = close ? CLOSEUP.cy : 0;
+  const w = (span / view) * 100;
+  const left = 50 - (0.5 + (cx - ox) / span) * w, top = 50 - (0.5 - (cy - oy) / span) * w;
+  const style = { width: `${w}%`, left: `${left}%`, top: `${top}%` };
+  const name = close ? 'closeup' : 'field';
+  return [h('img.fp-bg.fp-day', { src: `assets/img/ground/${name}-day.webp`, alt: '', loading: 'lazy', decoding: 'async', style }),
+          h('img.fp-bg.fp-night', { src: `assets/img/ground/${name}-night.webp`, alt: '', loading: 'lazy', decoding: 'async', style })];
+}
+
+function groupLabel(names) {
+  const slips = names.filter((n) => / slip$/.test(n) && n !== 'Leg slip').length;
+  const rest = names.filter((n) => !/ slip$/.test(n) || n === 'Leg slip').map((n) => n.toLowerCase());
+  return [slips ? `${slips} slip${slips > 1 ? 's' : ''}` : null, ...rest].filter(Boolean).join(', ');
+}
+
 /**
- * Fielding diagram for a plan from the profile data.
- * plan: {positions:[{name,x,y,zone}], counts, reasons, hand, bowling, outfieldCap}
+ * Field plan drawn on the rendered ground, with a zoomed inset for the
+ * catchers around the bat. Positions are placed in metres and expressed as
+ * percentages of the stage, so markers stay put at any size.
  */
 export function fieldPlan(plan, opts = {}) {
-  const W = 420, H = 440, cx = W / 2, cy = 230, R = 190;
-  const svg = frame(W, H, opts.label || `Field plan: ${plan.positions.map((p) => p.name).join(', ')}`);
-  const px = (p) => cx + p.x * R;
-  const py = (p) => cy - p.y * R;   // y > 0 is towards the bowler (up the page)
-  svg.append(s('ellipse', { cx, cy, rx: R + 14, ry: R + 14, fill: 'var(--grass)', 'fill-opacity': .55, stroke: 'var(--pitch)', 'stroke-opacity': .5 }));
-  svg.append(s('ellipse', { cx, cy, rx: R * 0.5, ry: R * 0.5, fill: 'none', stroke: 'var(--surface)', 'stroke-width': 2, 'stroke-dasharray': '6 6' }));
-  svg.append(s('rect', { x: cx - 7, y: cy - 58, width: 14, height: 76, rx: 2, fill: 'var(--gold-soft)', stroke: 'var(--gold)', 'stroke-opacity': .5 }));
-  svg.append(s('text', { x: cx, y: cy - 64, 'text-anchor': 'middle', class: 'ct-axis' }, 'bowler'));
-  svg.append(s('text', { x: 14, y: 22, class: 'ct-axis' }, plan.hand === 'left' ? 'left-hander' : 'right-hander'));
-  svg.append(s('text', { x: W - 14, y: 22, 'text-anchor': 'end', class: 'ct-axis' }, `${plan.hand === 'left' ? 'leg' : 'off'} side →`));
-  svg.append(s('text', { x: 14, y: H - 12, class: 'ct-axis' }, `← ${plan.hand === 'left' ? 'off' : 'leg'} side`));
-  const colour = { keeper: 'var(--sky)', close: 'var(--ball)', ring: 'var(--ink)', deep: 'var(--gold)' };
-  for (const p of plan.positions) {
-    const g = s('g', { class: 'ct-fielder' });
-    g.append(s('circle', { cx: px(p), cy: py(p), r: 7.5, fill: colour[p.zone] || 'var(--ink)', stroke: 'var(--surface)', 'stroke-width': 2 }));
-    const anchor = p.x > 0.55 ? 'end' : p.x < -0.55 ? 'start' : 'middle';
-    const dx = anchor === 'end' ? -10 : anchor === 'start' ? 10 : 0;
-    g.append(s('text', { x: px(p) + dx, y: py(p) + (p.y < -0.05 && Math.abs(p.x) < 0.3 ? 20 : -11), 'text-anchor': anchor, class: 'ct-field' }, p.name));
-    svg.append(g);
+  const hand = plan.hand === 'left' ? 'left' : 'right';
+  const spin = plan.bowling === 'spin';
+  const keeperUp = spin && (plan.reasons || []).some((r) => r.signal === 'stumped');
+  const placed = plan.positions.map((p) => {
+    const zone = p.zone || (p.name === 'Wicketkeeper' ? 'keeper' : 'ring');
+    return { ...p, zone, xy: groundXY(p.name, hand, zone, keeperUp) };
+  });
+  // Catchers behind or square of the bat cluster too tightly for the full view.
+  const cordon = placed.filter((p) => (p.zone === 'close' || p.zone === 'keeper') && p.xy[1] < -GROUND.half - 1);
+  const mark = (cls, [l, t], label, tip, side) => {
+    const m = h(`div.fp-pos.${cls}`, { style: { left: `${l}%`, top: `${t}%` }, tabindex: tip ? '0' : null },
+      h('span.fp-dot'), label ? h(`span.fp-tag.${side}`, label) : null);
+    if (tip) tooltip(m, tip);
+    return m;
+  };
+  const describe = (p) => `${p.name}${p.zone === 'close' ? ' (catcher)' : p.zone === 'deep' ? ' (boundary)' : p.zone === 'ring' ? ' (saving one)' : ''}`;
+  const batterXY = [hand === 'left' ? 0.5 : -0.5, -GROUND.half + 1.4];
+
+  // ---- full field
+  const pct = ([x, y]) => [50 + (x / VIEW) * 100, 50 - (y / VIEW) * 100];
+  const stage = h('div.fp-stage', { role: 'img', 'aria-label': opts.label || `Field plan: ${plan.positions.map((p) => p.name).join(', ')}` },
+    ...groundImages(VIEW));
+  stage.append(mark('fp-batter', pct(batterXY), null, `${hand === 'left' ? 'Left' : 'Right'}-handed batter on strike`));
+  stage.append(mark('fp-bowler', pct([hand === 'left' ? -0.9 : 0.9, GROUND.half + 1.2]), null, `${spin ? 'Spin' : 'Pace'} bowler`));
+  for (const p of placed) {
+    const inCordon = cordon.includes(p);
+    const side = p.xy[1] < -30 ? 'down' : (p.zone === 'close' ? (p.xy[0] >= 0 ? 'right' : 'left') : 'up');
+    const label = inCordon ? null : (SHORT[p.name] || p.name);
+    stage.append(mark(`fp-${p.zone}`, pct(p.xy), label, describe(p), side));
   }
+  const catchers = cordon.filter((p) => p.zone === 'close');
+  if (catchers.length) {
+    const cx = catchers.reduce((a, p) => a + p.xy[0], 0) / catchers.length;
+    const cy = Math.min(...catchers.map((p) => p.xy[1]));
+    const g = h('div.fp-pos.fp-group', { style: { left: `${pct([cx, cy])[0]}%`, top: `${pct([cx, cy])[1]}%` } },
+      h('span.fp-tag.down', groupLabel(catchers.map((p) => p.name))));
+    stage.append(g);
+  }
+
+  // ---- close-up of the catchers around the bat
+  let inset = null;
+  if (cordon.length) {
+    const xs = [...cordon.map((p) => p.xy[0]), batterXY[0]];
+    const ys = [...cordon.map((p) => p.xy[1]), batterXY[1]];
+    const icx = (Math.min(...xs) + Math.max(...xs)) / 2, icy = (Math.min(...ys) + Math.max(...ys)) / 2;
+    const view = Math.max(20, Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)) * 1.9);
+    const ip = ([x, y]) => [50 + ((x - icx) / view) * 100, 50 - ((y - icy) / view) * 100];
+    const ist = h('div.fp-stage.fp-inset-stage', { role: 'img', 'aria-label': `Close catchers: ${cordon.map((p) => p.name).join(', ')}` },
+      ...groundImages(view, icx, icy));
+    ist.append(mark('fp-batter', ip(batterXY), null, 'Batter on strike'));
+    const SIDE = { 'Wicketkeeper': 'left', 'Leg slip': 'left', 'Gully': 'right', '1st slip': 'down', '2nd slip': 'up',
+                   '3rd slip': 'down', '4th slip': 'up' };
+    cordon.forEach((p) => {
+      let side = SIDE[p.name] || 'up';
+      if (hand === 'left') side = side === 'left' ? 'right' : side === 'right' ? 'left' : side;
+      ist.append(mark(`fp-${p.zone}`, ip(p.xy), p.name === 'Wicketkeeper' ? (keeperUp ? 'Keeper (up)' : 'Keeper') : (SHORT[p.name] || p.name), describe(p), side));
+    });
+    inset = h('div.fp-inset', h('div.fp-inset-title', 'Around the bat'), h('div.fp-frame', ist));
+  }
+
   const c = plan.counts || {};
-  const legend = h('div.chart-legend.tiny',
-    h('span', h('span.swatch.dot', { style: { background: 'var(--ball)' } }), ` catchers ${c.close ?? ''}`),
-    h('span', h('span.swatch.dot', { style: { background: 'var(--ink)' } }), ` ring ${c.ring ?? ''}`),
-    h('span', h('span.swatch.dot', { style: { background: 'var(--gold)' } }), ` boundary ${c.deep ?? ''}`),
-    plan.outfieldCap != null ? h('span.faint', `max ${plan.outfieldCap} outside the circle`) : null);
-  return h('figure.chart-fig.field-fig', svg, legend);
+  const legend = h('div.chart-legend.tiny.fp-legend',
+    h('span', h('span.fp-key.fp-close'), ` catchers ${c.close ?? ''}`),
+    h('span', h('span.fp-key.fp-ring'), ` ring ${c.ring ?? ''}`),
+    h('span', h('span.fp-key.fp-deep'), ` boundary ${c.deep ?? ''}`),
+    h('span', h('span.fp-key.fp-keeper'), keeperUp ? ' keeper standing up' : ' keeper'),
+    plan.outfieldCap != null ? h('span.faint', `at most ${plan.outfieldCap} outside the circle`) : null,
+    h('span.faint', `${hand}-hander, ${spin ? 'spin' : 'pace'}`));
+  return h('figure.chart-fig.fp', h('div.fp-layout', h('div.fp-frame.fp-main', stage), inset), legend);
 }
 
 /** Percentile meter 0..1 with label. */

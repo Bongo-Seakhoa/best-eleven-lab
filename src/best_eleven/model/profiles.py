@@ -113,18 +113,8 @@ def _shrunk_rate(k, n, peer, strength=400.0):
 
 
 # --------------------------------------------------------------- field plans
-POSITIONS = {  # right-hander's view: x>0 off side, y>0 towards the bowler; radius 1 = boundary
-    "Wicketkeeper": (0.0, -0.13), "1st slip": (0.07, -0.15), "2nd slip": (0.13, -0.15),
-    "3rd slip": (0.19, -0.14), "4th slip": (0.25, -0.12), "Gully": (0.30, -0.06),
-    "Leg slip": (-0.08, -0.15), "Short leg": (-0.12, 0.02), "Silly point": (0.12, 0.03),
-    "Short mid-wicket": (-0.2, 0.18), "Point": (0.42, 0.0), "Cover": (0.36, 0.25),
-    "Extra cover": (0.26, 0.36), "Mid-off": (0.12, 0.45), "Mid-on": (-0.12, 0.45),
-    "Mid-wicket": (-0.36, 0.25), "Square leg": (-0.42, 0.0), "Short fine leg": (-0.28, -0.3),
-    "Short third man": (0.28, -0.3), "Third man": (0.62, -0.72), "Deep point": (0.94, 0.05),
-    "Deep cover": (0.8, 0.52), "Long-off": (0.3, 0.92), "Long-on": (-0.3, 0.92),
-    "Deep mid-wicket": (-0.8, 0.52), "Deep square leg": (-0.94, 0.05), "Fine leg": (-0.62, -0.72),
-    "Cow corner": (-0.62, 0.74),
-}
+# Named positions only; the site places them on the rendered ground in metres
+# (site/assets/js/ui/charts.js), so geometry lives in one place.
 OUTFIELD_CAP = {"multi": [9, 9, 9], "fifty": [2, 4, 5], "t20": [2, 5, 5], "hundred": [2, 5, 5]}
 
 
@@ -185,11 +175,8 @@ def field_plan(rates: dict, peer: dict, family: str, bowl_family: str, phase: in
     if spin and idx["stumped"] >= 1.3:
         deep_order = ["Long-on", "Long-off"] + [p for p in deep_order if p not in ("Long-on", "Long-off")]
     names = close_order[:catchers] + ring_order[:ring] + deep_order[:deep]
-    mirror = -1 if hand == "left" else 1
-    pos = [{"name": n, "x": round(POSITIONS[n][0] * mirror, 3), "y": POSITIONS[n][1],
-            "zone": "close" if n in close_order else "ring" if n in ring_order else "deep"} for n in names]
-    pos.insert(0, {"name": "Wicketkeeper", "x": 0.0, "y": -0.13 if not (spin and idx["stumped"] >= 1.3) else -0.06,
-                   "zone": "keeper"})
+    pos = [{"name": n, "zone": "close" if n in close_order else "ring" if n in ring_order else "deep"} for n in names]
+    pos.insert(0, {"name": "Wicketkeeper", "zone": "keeper"})
     return {"positions": pos, "counts": {"close": catchers, "ring": ring, "deep": deep},
             "outfieldCap": cap if not test else None,
             "reasons": [{"signal": s, "index": _r(v), "action": a} for s, v, a in why],

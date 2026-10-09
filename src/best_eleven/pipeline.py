@@ -62,6 +62,9 @@ def enrich(p: Paths, *, refresh: bool = False, log=print) -> dict:
         with _timed(f"enrich {name}", log):
             stats = mod.run(wiki, resolver, p.reference, warehouse=p.warehouse)
             out[name] = {k: v for k, v in stats.items() if not isinstance(v, (list, dict)) or len(str(v)) < 400}
+    from .enrich import logos
+    with _timed("enrich team images", log):
+        out["team_images"] = logos.run(wiki, p.warehouse, p.competitions, p.site / "assets" / "img" / "teams")
     manifest = {"fetched_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
                 "source": "English Wikipedia and Wikidata (CC BY-SA 4.0 / CC0)", "modules": out}
     (p.reference / "manifest.json").write_text(json.dumps(manifest, indent=1, default=str), encoding="utf-8")
@@ -110,11 +113,44 @@ def export(p: Paths, *, profiles: bool = True, log=print) -> dict:
         val = p.model / "validation.json"
         if val.exists():
             dump(json.loads(val.read_text(encoding="utf-8")), p.site_data / "validation.json")
-        ref_manifest = p.reference / "manifest.json"
-        if ref_manifest.exists():
-            dump(json.loads(ref_manifest.read_text(encoding="utf-8")), p.site_data / "reference.json")
+        dump(reference_summary(p), p.site_data / "reference.json")
         fam = p.model / "bowler_family_metrics.json"
         if fam.exists():
             dump(json.loads(fam.read_text(encoding="utf-8")), p.site_data / "model" / "bowler_family.json")
         log(f"  {len(meta['scopes'])} scopes, {meta.get('profiles', {}).get('players', 0):,} profiles")
         return meta
+
+
+def reference_summary(p: Paths) -> dict:
+    """Counts straight from the committed snapshots, so the site always describes
+    exactly the reference data it was built with."""
+    def csv(name):
+        path = p.reference / name
+        return pd.read_csv(path, dtype=str, keep_default_na=False) if path.exists() else None
+    manifest = p.reference / "manifest.json"
+    fetched = json.loads(manifest.read_text(encoding="utf-8")).get("fetched_at", "") if manifest.exists() else ""
+    mods = {}
+    w = csv("players_wiki.csv")
+    if w is not None:
+        mods["player_attributes"] = {"articles": len(w), "linked_to_cricsheet": int((w["cricsheet_id"] != "").sum()),
+                                     "batting_hand": int((w["batting_hand"] != "").sum()),
+                                     "bowling_style": int((w["bowling_class"] != "").sum()),
+                                     "retirements_recorded": int((w["retired_international"] == "1").sum())}
+    c = csv("careers_lists.csv")
+    if c is not None:
+        mods["historic_careers"] = {"careers": len(c), "lists": int(c["source_page"].nunique()),
+                                    "linked_to_cricsheet": int((c["cricsheet_id"] != "").sum())}
+    t = csv("captain_totals.csv")
+    if t is not None:
+        mods["captaincy"] = {"captaincy_records": len(t), "captains": int(t["wikipedia_title"].replace("", None).nunique()),
+                             "linked_to_cricsheet": int((t["cricsheet_id"] != "").sum())}
+    q = csv("squads.csv")
+    if q is not None:
+        mods["current_squads"] = {"squad_places": len(q), "teams": int(q[["team", "competition"]].drop_duplicates().shape[0]),
+                                  "linked_to_cricsheet": int((q["cricsheet_id"] != "").sum())}
+    imgs = p.site / "assets" / "img" / "teams" / "index.json"
+    if imgs.exists():
+        idx = json.loads(imgs.read_text(encoding="utf-8"))
+        mods["team_images"] = {"flags": sum(1 for v in idx.values() if v["kind"] == "flag"),
+                               "logos": sum(1 for v in idx.values() if v["kind"] == "logo")}
+    return {"source": "English Wikipedia and Wikidata (CC BY-SA 4.0 / CC0)", "fetched_at": fetched, "modules": mods}

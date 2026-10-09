@@ -1,52 +1,41 @@
-# Assurance and handoff
+# Assurance
 
-**Delivery:** Best Eleven 0.1, research prototype. **Decision:** deliver the working local package and explicitly synthetic preview; do not call real-data research, public publication or formal independent acceptance complete.
+What has been checked, how, and what remains open. Status as of 9 October 2026.
 
-## Observed verification
+## Checks that run on every build
 
-| Check | Observed result |
-|---|---|
-| Automated tests | 50 passing tests: accounting, identity/revision behavior, per-match rollback, unsafe ZIPs, partial imports, real/demo separation, metadata dates, team scopes, optimization, profile exposure, fantasy, temporal diagnostics, source mocks and API behavior. |
-| End-to-end synthetic pipeline | 108 generated matches, 36 per format; 64 fictional roster identities; 60,441 delivery records. Repeat generation leaves all 108 matches unchanged. |
-| Selection | Valid, unique elevens across Test/ODI/T20 under the demonstrated policies. Infeasible constraints return no XI; returned assignments are checked independently of solver status. |
-| Notebook | The 19-cell notebook ran top to bottom: all nine code cells executed; eight retain outputs, including four figures. Figures were visually inspected. The notebook and its HTML rendering are included. |
-| Package entry point | Editable installation completed in the available environment; CLI selection, evaluation and self-contained preview exports executed. |
-| Offline browser | Chromium rendered the actual self-contained UI. Format switching, saved policy changes, profiles and sensitivity operated. No JavaScript page errors were observed. The 390-pixel viewport had no document-level horizontal overflow. Desktop, player and mobile screenshots were inspected. |
-| Local API | FastAPI TestClient exercised the real application functions. Additional calls verified the inclusion-cost response and rejection of an invalid upload. A launched local HTTP server answered its health/status endpoint. |
-| Full browser-to-server navigation | **Blocked by the environment’s browser navigation policy.** This is not reported as a pass. The optional browser script records the block and exits nonzero while retaining passed offline checks. |
-| Provider network acquisition | **Not completed.** Documentation was readable, but bulk ZIP retrieval was unavailable from the execution environment. Tests used controlled archives and HTTP responses; they do not establish successful live retrieval. |
-| GitHub | **Not published.** The connected interface exposed read-only repository operations and there was no authenticated `gh` CLI. A reviewed-file publication script is included, but its remote write has not been run. |
-| Remote CI / manual refresh | Workflow definitions are included. Neither was run on GitHub; no recurring schedule or cloud job was enabled. |
+[src/best_eleven/validate.py](../src/best_eleven/validate.py) runs inside `best-eleven build`. The Pages workflow does not publish when a check fails, so the live site keeps the last good build.
 
-The exact current test receipt and component versions are in `examples/verification.json`. The browser receipt is `examples/browser_verification.json`. These are test results, not invented confidence percentages.
+| Check | Method | Result (Oct 2026) |
+|---|---|---|
+| Ingest accounting | Rebuild each innings total from deliveries; compare with every official winning margin by runs (including innings victories) and by wickets | 9,981 of 9,985 run margins and 10,326 of 10,327 wicket margins exact. The five misses are associate matches whose source totals disagree with their own result. |
+| Identity and completeness | Compare Cricsheet career totals with Wikipedia infoboxes for men's Test players whose careers lie wholly inside coverage, from sides that have never met Afghanistan in a Test, with infoboxes updated within 60 days | 124 players, 100% exact on matches, runs and wickets |
+| Broad completeness (context) | Same comparison for every player | Exact for 70% of Test, 37% of ODI and 39% of T20I players. Where Cricsheet has fewer matches, the misses concentrate in sides that play Afghanistan (Cricsheet withholds those matches). Where it has more, women's infoboxes last updated in 2023–24 explain it. |
+| Does the adjustment help? | Rating from 2016–21 vs raw output per ball in 2022–26, batters with 300+ balls in both (Spearman) | Adjusted beats raw value per ball in Tests (0.64 vs 0.60), ODIs (0.45 vs 0.40), T20Is (0.35 vs 0.31) and the IPL (0.40 vs 0.35). In T20Is, plain strike rate (0.44) beats both. |
+| Bowling-type classifier | 5-fold cross-validation on 3,210 bowlers with Wikipedia styles | 89% accuracy, AUC 0.965; at the 0.85 threshold, 88% of bowlers labelled with 94% accuracy |
+| Selector exactness | 120 random instances (caps, locks, exclusions) solved by the browser engine and by SciPy's MILP | Identical optima |
 
-## OmniMind status
+## One-off verification (October 2026)
 
-The project’s user-requested operating rules were consulted, but the actual local OmniMind runtime and a second AI provider were not available in the execution environment. No runtime lane, PM verdict, independent cross-provider review or formal acceptance was fabricated. A cross-module project of this kind still needs independent review before it can be called formally accepted or production-ready.
+**Captaincy snapshot.** Checked by an independent reviewer against the live pages: 28 table layouts, and 319 captain aggregates matching the pages' own total rows. Examples confirmed include Ponting 77 Tests, Dhoni 200 ODIs and 72 T20Is, Bavuma 12 Tests (11 won), Meg Lanning 78 ODIs, Williamson 40 Tests, and IPL captains. The seven remaining mismatches are inconsistencies inside the source pages; they are kept as published and flagged. 23 sampled identity links were confirmed as the same person.
 
-Private operating documents, other projects, account secrets and unrelated user data are not copied into the public package.
+**Retirement detection.** Spot-checked as correct for Kohli and Rohit Sharma (Tests and T20Is), Steve Smith (ODIs), Stokes (international, June 2026), Broad and Steyn. Come-backs are honoured: Shabnim Ismail reversed her retirement in May 2026, and Dane van Niekerk's 2025 T20I appearance overrides her 2023 retirement statement.
 
-## Material remaining work
+**Current squads.** Twelve national sections are older than 15 months on Wikipedia, South Africa women's (July 2022) among them; they no longer count as current squads. 93% of linked squad players have appearances for that team.
 
-The first scientific milestone is a **real, reconciled national dataset**, not another decorative UI pass. Obtain the actual archives, verify the reviewed schema against them, reconcile scorecard totals and coverage, resolve identity/role/appointment sources, and run the fixed national-study protocol without choosing a favorable comparator after the result.
+**Historic careers.** Spot checks against the lists: Kallis (13,206 Test runs for South Africa), Tendulkar 15,921, Muralitharan 795 for Sri Lanka, Bradman 99.94, Warne 708, Mithali Raj 7,805 ODI runs. All 681 name-matched identity links were confirmed by appearances for that country, format and gender.
 
-The score is a declared heuristic. Opponent strength and conditions are not fully adjusted; the separate predictive diagnostic does not validate XI choice. No complete-career or all-time ranking and no verified finding about Temba Bavuma is present. Current availability and leadership evidence must be supplied rather than inferred.
+**Sense checks on selections.** The current South Africa Test XI from the current squad comes out Markram, Rickelton, Stubbs, Bedingham, Bavuma (c), Mulder, Verreynne (wk), Bosch, Jansen, Harmer, Rabada. The all-eras World Test XI is Bradman, Weekes, Hammond, Barrington, Smith, Walcott, Imran Khan, Lohmann, Ambrose, Muralitharan, McGrath.
 
-The field-placement panel intentionally stays unavailable. Minimal tracking-shell checks do not establish measurement validity, legal field settings, overlap or causal identifiability. Full tracking and a validated research design are required before an optimum could be reported.
+## Known gaps
 
-For operations, validate the local browser-to-server flow on an unrestricted local machine, run the source refresh and remote CI, review source terms, and obtain the outstanding independent review. Full-archive performance, withdrawn-match reconciliation and automatic metadata conflict resolution remain unvalidated or unimplemented. The local process has one writer lock, not a distributed multi-user job system. Do not expose it directly as a public service.
+- Cricsheet withholds every match involving Afghanistan's men (379 matches at the October archive). Afghanistan's men have no ball-by-ball ratings, and their opponents' records are short by those games.
+- Men's ball-by-ball coverage starts around 2002. Earlier careers enter only through the all-eras mode, which has no batting positions, strike rates or opposition adjustment.
+- Field plans have no spatial data behind the named positions.
+- Squads, retirements and captaincy come from Wikipedia text and tables and can lag the real world. Vice-captaincy is known only for current squads.
+- Overseas status is inferred from international appearances or Wikipedia nationality, not from league registrations.
+- Women's Tests (24 matches) are too few to adjust for opposition.
 
-## Reproduce the checks
+## Process notes
 
-```bash
-python -m pip install -e '.[dev]'
-pytest -q
-python -m jupyter nbconvert --execute --to notebook --inplace notebooks/01_selection_and_matchups.ipynb
-python -m pip install -e '.[ui]'
-python -m playwright install chromium
-python scripts/verify_browser.py
-```
-
-A system Chromium installation can be passed with `--chromium /path/to/chromium`. The notebook only generates fictional data in a temporary database and removes it when complete. The browser script has a separate temporary database. No test calls the live data provider.
-
-The reviewed-public-file manifest helps prevent accidental publication of unrelated files. It is a checksum list, not a digital signature or proof of independent review. Validate only with `python scripts/publish_github.py --owner YOUR_ACCOUNT`; add `--publish` solely when deliberately creating a new public repository.
+This build was produced with one AI provider. The OmniMind contract asks for independent cross-provider review on changes of this size; that review has not happened yet and is owed.
