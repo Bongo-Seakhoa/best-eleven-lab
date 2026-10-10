@@ -21,10 +21,16 @@ export const captains = () => load('captains.json');
 export const validation = () => load('validation.json');
 export const runExpectancy = () => load('model/run_expectancy.json');
 export const bowlerFamily = () => load('model/bowler_family.json');
+export const versusModel = () => load('model/versus.json');
+export const priorsModel = () => load('model/priors.json');
 export const reference = () => load('reference.json');
 
 export const FULL_MEMBERS = ['Australia', 'England', 'India', 'South Africa', 'New Zealand', 'Pakistan',
   'Sri Lanka', 'West Indies', 'Bangladesh', 'Zimbabwe', 'Afghanistan', 'Ireland'];
+
+// Composite exhibition sides (ICC World XI v Australia 2005, Asia XI v Africa XI):
+// real matches whose records count, but not teams anyone picks an eleven for.
+export const COMPOSITE_SIDES = new Set(['ICC World XI', 'World XI', 'Asia XI', 'Africa XI']);
 
 // Team colours: recognisable, never relied on alone (names always shown).
 export const TEAM_COLOURS = {

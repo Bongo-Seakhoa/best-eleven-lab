@@ -5,13 +5,15 @@ import { teamLabel } from '../ui/teams.js';
 import * as data from '../data.js';
 import { resultBar } from '../ui/charts.js';
 import { setQuery } from '../app.js';
+import { playerHref } from '../ui/links.js';
+import { recordKey, careerRows, careerFigures, MAX_COMPARE, SCOPE_DEFAULTS } from '../ui/captaincy.js';
+import { rememberTitle } from '../memory.js';
 
-const MAX_COMPARE = 4;
 const BEST_MIN = 20;
 const PAGE_ROWS = 60;
 const MIN_MAX = 100;
 const FORMATS = ['Test', 'ODI', 'T20I'];
-const DEFAULTS = { level: 'international', g: 'male', f: 'Test', comp: '', team: '', min: 10, q: '', ids: '', sort: 'win' };
+const DEFAULTS = { ...SCOPE_DEFAULTS, comp: '', team: '', min: 10, q: '', ids: '', sort: 'win' };
 const LEAGUE_SHORT = {
   'Indian Premier League': 'IPL', 'Big Bash League': 'BBL', 'Pakistan Super League': 'PSL',
   'Bangladesh Premier League': 'BPL', 'Champions League Twenty20': 'CLT20',
@@ -51,12 +53,19 @@ const plural = (n, one, many) => `${n === 1 ? one : many}`;
 const wikiUrl = (title) => `https://en.wikipedia.org/wiki/${encodeURIComponent(title.replace(/ /g, '_'))}`;
 const reducedMotion = () => window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
 
-/** Stable short key for a captaincy record, used in the ids query parameter. */
-function recordKey(r) {
-  const str = [r.level, r.gender, r.format, r.country_or_team, r.competition, r.wikipedia_title || r.name].join('|');
-  let x = 0x811c9dc5;
-  for (let i = 0; i < str.length; i++) { x ^= str.charCodeAt(i); x = Math.imul(x, 0x01000193); }
-  return (x >>> 0).toString(36);
+/** Family name for short titles: "Smith", "de Villiers". */
+function surname(name) {
+  const parts = String(name).trim().split(/\s+/);
+  let i = parts.length - 1;
+  while (i > 0 && /^[a-z]/.test(parts[i - 1])) i--;
+  return parts.slice(i).join(' ');
+}
+
+/** "Smith", "Smith and Waugh", "Smith, Ponting and Waugh", shortened past ~38 characters. */
+function nameList(names) {
+  const join = (xs) => (xs.length < 2 ? xs.join('') : `${xs.slice(0, -1).join(', ')} and ${xs[xs.length - 1]}`);
+  const full = join(names);
+  return full.length <= 38 || names.length < 3 ? full : `${names.slice(0, 2).join(', ')} and ${names.length - 2} more`;
 }
 
 function matchNoun(c, n) {
@@ -193,7 +202,8 @@ function prepare(rows, profiles, leagues) {
       played: toNum(r.played), won: toNum(r.won), lost: toNum(r.lost), drawn: toNum(r.drawn),
       tied: toNum(r.tied), nr: toNum(r.no_result), win: toNum(r.win_pct),
     };
-    c.hasProfile = !!c.id && profiles.has(c.id);
+    // Without the player list, try the profile and let it report a failure.
+    c.hasProfile = !!c.id && (!profiles || profiles.has(c.id));
     c.ongoing = c.last == null && c.first != null;
     const league = leagues.get(c.comp);
     c.fmtLabel = c.level === 'franchise' ? (LEAGUE_SHORT[c.comp] || league?.short || c.comp) : c.format;
@@ -230,8 +240,23 @@ export async function mount(root, route) {
   const announce = (msg) => { live.textContent = ''; requestAnimationFrame(() => { live.textContent = msg; }); };
   // Guard: a debounced write must not land on another page after navigation.
   const syncUrl = debounce(() => {
-    if (!destroyed && /^#\/captains(\?|$)/.test(location.hash || '#/captains')) setQuery(writeQuery(st));
+    if (!destroyed && /^#\/captains(\?|$)/.test(location.hash || '#/captains')) persist();
   }, 120);
+
+  /** Write the state to the URL and give the saved page a short title. */
+  function persist() {
+    setQuery(writeQuery(st), route);
+    const list = selected().list;
+    let title;
+    if (list.length === 1) title = `${surname(list[0].name)}’s record`;
+    else if (list.length) title = nameList(list.map((c) => surname(c.name)));
+    else {
+      title = `${scopeLabel()} captains`;
+      title = title.charAt(0).toUpperCase() + title.slice(1);
+      if (st.q.trim() && title.length + st.q.trim().length < 34) title += ` “${st.q.trim()}”`;
+    }
+    rememberTitle('captains', title);
+  }
 
   // ------------------------------------------------------------- loading
   function skeleton() {
@@ -257,10 +282,10 @@ export async function mount(root, route) {
       return false;
     }
     meta = metaR.status === 'fulfilled' ? metaR.value : null;
-    const profiles = new Set(ixR.status === 'fulfilled' ? ixR.value.map((p) => p.id) : []);
+    const profiles = ixR.status === 'fulfilled' ? new Set(ixR.value.map((p) => p.id)) : null;
     const leagues = new Map((meta?.scopes || []).filter((s) => s.tier === 'league').map((s) => [s.label, s]));
     notices = [];
-    if (ixR.status === 'rejected') notices.push('Player profiles could not load, so names are not linked and playing records are missing.');
+    if (ixR.status === 'rejected') notices.push('The player list could not load, so playing records in the comparison may be missing.');
     all = prepare(capR.value.rows, profiles, leagues);
     byKey = new Map(all.map((c) => [c.key, c]));
     page.append(live, hero, compareEl, filtersEl, insightsEl, resultsEl, tray);
@@ -468,12 +493,13 @@ export async function mount(root, route) {
         st.level === 'franchise' ? h('li', 'A franchise record covers every team the captain led in that competition. The source does not split it by team.') : null,
         h('li', 'A dash means the source leaves that count blank. It is not a zero.'),
         flagged ? h('li', `${flagged} ${plural(flagged, 'record', 'records')} in these filters ${plural(flagged, 'does', 'do')} not add up in the source. They are marked “Totals off” and left as published.`) : null),
-      h('p.tiny.faint', 'Source: Wikipedia captaincy lists (CC BY-SA 4.0). Names link to a player profile when the captain appears in Cricsheet’s ball-by-ball archive.'));
+      h('p.tiny.faint', 'Source: Wikipedia captaincy lists (CC BY-SA 4.0). Names link to the player’s page: a ball-by-ball profile where Cricsheet holds enough of their deliveries, otherwise their career record. A name the list links to no article stays unlinked.'));
     insightsEl.append(card, notes);
   }
 
   function nameNode(c) {
-    return c.hasProfile ? h('a', { href: `#/player/${encodeURIComponent(c.id)}` }, c.name) : h('span', c.name);
+    const href = playerHref(c.id, c.wiki);
+    return href ? h('a', { href }, c.name) : h('span', c.name);
   }
 
   // ------------------------------------------------------------- results
@@ -753,15 +779,8 @@ export async function mount(root, route) {
   }
 
   async function fillOwn(c, own, flags) {
-    if (!c.id) {
-      own.append(h('p.small.muted', 'This captain has no Cricsheet match, so there is no playing record to show.'));
-      return;
-    }
     if (!c.hasProfile) {
-      const sc = meta?.scopes?.find((s) => s.key === c.scopeKey);
-      own.append(h('p.small.muted', sc
-        ? `No ball-by-ball profile for this captain. Cricsheet’s ${sc.label} start in ${sc.years[0]}.`
-        : 'No ball-by-ball profile for this captain in the archive.'));
+      await fillCareer(c, own);
       return;
     }
     const loading = h('div.stack-s', { 'aria-busy': 'true' },
@@ -774,7 +793,7 @@ export async function mount(root, route) {
     } catch (err) {
       loading.remove();
       own.append(h('p.small.cap-err', 'The player profile could not load.'),
-        h('a.small', { href: `#/player/${encodeURIComponent(c.id)}` }, 'Try the full profile'));
+        h('a.small', { href: playerHref(c.id) }, 'Try the full profile'));
       return;
     }
     loading.remove();
@@ -825,7 +844,40 @@ export async function mount(root, route) {
       if (k.wickets) bits.push(`${k.wickets} wickets${k.bowl_avg != null ? ` at ${fmt.avg(k.bowl_avg)}` : ''}`);
       own.append(h('p.tiny.muted.cap-career', h('span', 'Whole career, Wikipedia: '), bits.join(' · ')));
     }
-    own.append(h('a.btn.sm.cap-profile', { href: `#/player/${encodeURIComponent(c.id)}` }, 'Full profile'));
+    own.append(h('a.btn.sm.cap-profile', { href: playerHref(c.id) }, 'Full profile'));
+  }
+
+  /** A captain without a ball-by-ball profile: totals from the all-eras career list, when it covers the format. */
+  async function fillCareer(c, own) {
+    const sc = meta?.scopes?.find((s) => s.key === c.scopeKey);
+    const what = c.level === 'franchise' ? `the ${c.fmtLabel}` : `${c.gender === 'female' ? 'women’s' : 'men’s'} ${c.format}s`;
+    own.append(h('p.small.muted', !c.id ? 'Not matched to a player in Cricsheet’s ball-by-ball archive.'
+      : sc?.years?.length ? `No ball-by-ball profile. Cricsheet’s record of ${what} starts in ${sc.years[0]}.` : 'No ball-by-ball profile in the archive.'));
+    const histKey = c.level === 'international' && (c.format === 'Test' || c.format === 'ODI') ? c.scopeKey : null;
+    if (histKey) {
+      const loading = h('div.skeleton', { style: { height: '56px' }, 'aria-busy': 'true' });
+      own.append(loading);
+      let H = null;
+      try { H = await data.historic(histKey); } catch (err) { /* reported below */ }
+      loading.remove();
+      if (!H) {
+        own.append(h('p.small.cap-err', 'The career list could not load.'));
+      } else {
+        const ids = new Set(c.id ? [c.id] : []), titles = new Set(c.wiki ? [c.wiki] : []);
+        for (const r of careerRows(H, ids, titles).filter((x) => x.country === c.team)) {
+          const f = careerFigures(r);
+          const line = (label, value, sample) => h('div', h('dt', label), h('dd', h('span.num', value), sample ? h('span.tiny.faint', ` ${sample}`) : null));
+          own.append(h('div.tiny.muted', 'Career totals, Wikipedia',
+            r.first ? `, ${r.first === r.last ? r.first : `${r.first}–${r.last}`}` : '',
+            f.matches ? ` · ${f.matches} ${plural(f.matches, c.format, c.format + 's')}` : ''),
+          h('dl.cap-own-list',
+            line('Batting average', fmt.avg(f.avg), f.runs ? `${fmt.n(f.runs)} runs, ${fmt.n(r.outs)} outs` : 'no runs listed'),
+            line('Bowling average', fmt.avg(f.bowlAvg), f.wkts ? `${fmt.n(f.wkts)} wkts` : 'no wickets listed')));
+        }
+      }
+    }
+    const href = playerHref(c.id, c.wiki);
+    if (href) own.append(h('a.btn.sm.cap-profile', { href }, 'Career record'));
   }
 
   // ---------------------------------------------------------------- tray
@@ -870,7 +922,7 @@ export async function mount(root, route) {
   }
 
   await load();
-  if (all.length) setQuery(writeQuery(st));
+  if (all.length) persist();
 
   return {
     update(r) {
@@ -880,7 +932,7 @@ export async function mount(root, route) {
       limit = PAGE_ROWS;
       if (!all.length) { load(); return; }
       renderAll();
-      setQuery(writeQuery(st));
+      persist();
     },
     destroy() {
       destroyed = true;

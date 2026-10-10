@@ -1,12 +1,20 @@
 // Player profile: who they are, what Wikipedia says they have done, and where
 // the ball-by-ball record shows them strong or weak in each competition.
+// Players with no ball-by-ball profile (most careers before Cricsheet's
+// coverage) get a career-record page from the all-eras lists and captaincy
+// records instead, by Cricsheet id or as #/player/w:<Wikipedia title>.
 import { h, clear, fmt, initials } from '../ui/dom.js';
 import { teamLabel } from '../ui/teams.js';
 import { divergingBars, seasonChart, compareDots, fieldPlan, percentile, resultBar } from '../ui/charts.js';
+import { compareHref, careerRows, careerFigures } from '../ui/captaincy.js';
 import * as data from '../data.js';
 import { setQuery } from '../app.js';
+import { rememberTitle, saved as savedPage } from '../memory.js';
+import { BOWL_LABELS } from './players.js';
 
 const ID_RE = /^[0-9a-f]{8}$/;
+const HISTORIC = ['men-test', 'men-odi', 'women-test', 'women-odi'];
+const NOUN = { Test: ['Test', 'Tests'], ODI: ['ODI', 'ODIs'], T20I: ['T20I', 'T20Is'] };
 const FORMAT_RANK = { Test: 0, ODI: 1, T20I: 2 };
 const NATIONAL_TAB = { Test: 'Tests', ODI: 'ODIs', T20I: 'T20Is' };
 // These mirror src/best_eleven/model/profiles.py, which wrote the files.
@@ -88,11 +96,15 @@ const empty = (text) => h('p.small.muted.pp-empty', text);
 
 // ------------------------------------------------------------------ view
 export async function mount(root, route) {
-  const id = String(route.arg || '').trim().toLowerCase();
+  const arg = String(route.arg || '').trim();
+  const wiki = /^w:/i.test(arg) ? arg.slice(2).replace(/_/g, ' ').trim() : null;
+  const id = wiki == null ? arg.toLowerCase() : null;
   const page = h('div.page.player-page');
   root.append(page);
   const prevTitle = document.title;
   let ctl = null;
+  // Until this page knows who it shows, its return link must not name the last player.
+  rememberTitle('players', 'Player profile');
 
   const view = {
     update(r) {
@@ -103,6 +115,15 @@ export async function mount(root, route) {
     destroy() { document.title = prevTitle; },
   };
 
+  if (wiki != null) {
+    const loadCareer = async () => {
+      clear(page);
+      page.append(skeleton());
+      if (!(await careerPage(page, { titles: [wiki] }, loadCareer)) && page.isConnected) notFound(page, wiki);
+    };
+    if (wiki) await loadCareer(); else notFound(page, '');
+    return view;
+  }
   if (!ID_RE.test(id)) {
     notFound(page, route.arg);
     return view;
@@ -111,10 +132,20 @@ export async function mount(root, route) {
   async function load() {
     clear(page);
     page.append(skeleton());
+    // Ask the player list first, so a career-only player costs no failed profile request.
+    // If the list itself fails, try the profile and let that request decide.
+    const listed = await data.playerIndex().then((ix) => ix.some((e) => e.id === id), () => null);
+    if (!page.isConnected) return;
+    if (listed === false) {
+      if (!(await careerPage(page, { ids: [id] }, load)) && page.isConnected) notFound(page, id);
+      return;
+    }
     let p, meta = null;
     try {
       [p, meta] = await Promise.all([data.player(id), data.meta().catch(() => null)]);
     } catch (err) {
+      if (!page.isConnected) return;
+      if (/HTTP 404/.test(String(err?.message || '')) && await careerPage(page, { ids: [id] }, load)) return;
       if (!page.isConnected) return;
       await missing(page, id, err, load);
       return;
@@ -122,6 +153,7 @@ export async function mount(root, route) {
     if (!page.isConnected) return;
     clear(page);
     document.title = `${p.name} · Best Eleven`;
+    rememberTitle('players', p.name);
     const scopes = orderScopes(p, meta);
     const female = scopes.some((s) => (s.info?.gender || (s.key.includes('women') ? 'female' : '')) === 'female');
     page.append(hero(p, scopes, meta));
@@ -131,7 +163,7 @@ export async function mount(root, route) {
       ctl = tabs.ctl;
       page.append(tabs.el);
     }
-    page.append(captaincyCard(p));
+    page.append(captaincyCard(p.captaincy));
     page.append(squadsCard(p));
   }
 
@@ -152,14 +184,15 @@ function skeleton() {
 }
 
 function notFound(page, arg) {
-  const shown = String(arg || '').slice(0, 40);
+  const shown = String(arg || '').slice(0, 60);
   clear(page);
+  rememberTitle('players', 'Player not found');
   page.append(h('div.pp-missing.fade-in',
     h('div.eyebrow', 'Player profile'),
     h('h1.display', 'Player not found'),
-    h('p.lede', shown ? `No player in the archive has the id “${shown}”. Profile links use Cricsheet’s eight-character player ids.`
+    h('p.lede', shown ? `Nothing in the ball-by-ball archive, the career lists or the captaincy records matches “${shown}”. Player links use Cricsheet’s eight-character ids or a Wikipedia article title.`
       : 'This link does not name a player.'),
-    h('div.row', h('a.btn.primary', { href: '#/players' }, 'Browse all players'), h('a.btn', { href: '#/' }, 'Pick an XI'))));
+    h('div.row', h('a.btn.primary', { href: '#/players' }, 'Browse all players'), h('a.btn', { href: '#/' }, 'Best XI'))));
 }
 
 async function missing(page, id, err, retry) {
@@ -184,6 +217,7 @@ async function missing(page, id, err, retry) {
       labels.length ? h('p.small.muted', `Appears in: ${labels.join(', ')}.`) : null,
       h('div.row', h('a.btn.primary', { href: '#/players' }, 'Browse all players'))));
     document.title = `${entry.n} · Best Eleven`;
+    rememberTitle('players', entry.n);
     return;
   }
   if (is404) { notFound(page, id); return; }
@@ -191,6 +225,181 @@ async function missing(page, id, err, retry) {
     h('strong', 'This profile could not load. '), String(err?.message || err),
     h('div.row.mt', h('button.btn.sm', { type: 'button', onclick: retry }, 'Try again'),
       h('a.btn.sm.ghost', { href: '#/players' }, 'Browse all players')))));
+}
+
+// ---------------------------------------------------------- career record
+const noun = (format, k) => (NOUN[format] ? NOUN[format][k === 1 ? 0 : 1] : format);
+const genderWord = (g) => (g === 'female' ? 'women’s' : 'men’s');
+const LIST_LABEL = {
+  'men-test': 'the men’s Test career list', 'men-odi': 'the men’s ODI career list',
+  'women-test': 'the women’s Test career list', 'women-odi': 'the women’s ODI career list',
+};
+
+/**
+ * Career-record page for a player without a ball-by-ball profile, from the
+ * all-eras career lists and the captaincy records. Returns false when no
+ * record names them and every source loaded, so the caller shows not-found.
+ */
+async function careerPage(page, seed, retry) {
+  const [capR, metaR, ...histR] = await Promise.allSettled(
+    [data.captains(), data.meta(), ...HISTORIC.map((k) => data.historic(k))]);
+  if (!page.isConnected) return true;
+  const failed = [];
+  const caps = capR.status === 'fulfilled' && Array.isArray(capR.value?.rows) ? capR.value.rows : null;
+  if (!caps) failed.push('the captaincy records');
+  const lists = HISTORIC.map((key, i) => ({ key, H: histR[i].status === 'fulfilled' ? histR[i].value : null }));
+  for (const l of lists) if (!l.H?.players) failed.push(LIST_LABEL[l.key]);
+  const meta = metaR.status === 'fulfilled' ? metaR.value : null;
+  const rec = gather(seed, lists, caps || []);
+  if (!rec.hist.length && !rec.caps.length) {
+    if (!failed.length) return false;
+    clear(page);
+    rememberTitle('players', 'Player profile');
+    page.append(h('div.notice.error', { role: 'alert' }, h('div',
+      h('strong', 'This player’s records could not load. '), `${cap(listText(failed))} did not load.`,
+      h('div.row.mt', h('button.btn.sm', { type: 'button', onclick: retry }, 'Try again'),
+        h('a.btn.sm.ghost', { href: '#/players' }, 'Browse all players')))));
+    return true;
+  }
+  clear(page);
+  careerView(page, rec, meta, failed);
+  return true;
+}
+
+const listText = (xs) => (xs.length < 2 ? xs.join('') : `${xs.slice(0, -1).join(', ')} and ${xs[xs.length - 1]}`);
+
+/** Every row naming this person: ids and titles found on one row identify the others. */
+function gather(seed, lists, caps) {
+  const ids = new Set(seed.ids || []), titles = new Set(seed.titles || []);
+  let size = -1, hist = [], capRows = [];
+  while (ids.size + titles.size !== size) {
+    size = ids.size + titles.size;
+    hist = lists.flatMap(({ key, H }) => (H?.players ? careerRows(H, ids, titles).map((r) => ({
+      ...r, list: key, format: H.format, gender: H.gender, base: H.baselines?.[String(r.decade)] || null,
+    })) : []));
+    capRows = caps.filter((r) => (r.cricsheet_id && ids.has(r.cricsheet_id)) || (r.wikipedia_title && titles.has(r.wikipedia_title)));
+    for (const r of hist) { if (r.id) ids.add(r.id); if (r.title) titles.add(r.title); }
+    for (const r of capRows) { if (r.cricsheet_id) ids.add(r.cricsheet_id); if (r.wikipedia_title) titles.add(r.wikipedia_title); }
+  }
+  hist.sort((a, b) => (FORMAT_RANK[a.format] ?? 9) - (FORMAT_RANK[b.format] ?? 9) || (a.gender === b.gender ? 0 : a.gender === 'male' ? -1 : 1) || b.m - a.m);
+  return { ids, titles, hist, caps: capRows };
+}
+
+function careerView(page, rec, meta, failed) {
+  const byM = rec.hist.slice().sort((a, b) => b.m - a.m);
+  const main = byM[0] || null;
+  const intl = rec.caps.filter((r) => r.level === 'international');
+  const name = main?.name || rec.caps[0]?.name || [...rec.titles][0] || 'Unnamed player';
+  const wiki = main?.title || rec.caps.find((r) => r.wikipedia_title)?.wikipedia_title || [...rec.titles][0] || '';
+  const countries = [...new Set([...byM.map((r) => r.country), ...intl.map((r) => r.country_or_team)].filter(Boolean))];
+  const pick = (k) => byM.map((r) => r[k]).find(Boolean) || '';
+  document.title = `${name} · Best Eleven`;
+  rememberTitle('players', name);
+
+  page.append(careerHero(rec, { name, wiki, countries, role: pick('role'), hand: pick('hand'), bowl: pick('bowl') }));
+  page.append(whyNote(rec, meta, countries));
+  if (failed.length) {
+    page.append(h('div.notice', h('div', h('strong', 'Part of the record may be missing. '),
+      `${cap(listText(failed))} did not load, so ${failed.length > 1 ? 'they are' : 'it is'} not shown here. Reload the page to try again.`)));
+  }
+  if (rec.hist.length) page.append(careerFormats(rec.hist));
+  page.append(captaincyCard(rec.caps));
+}
+
+function careerHero(rec, { name, wiki, countries, role, hand, bowl }) {
+  const avatar = h('span.avatar.pp-avatar', { 'aria-hidden': 'true' }, initials(name));
+  if (countries[0]) avatar.style.setProperty('--tc', data.teamColour(countries[0]));
+  // One line per format: matches and span, summed across the sides they played for.
+  const formats = new Map();
+  for (const r of rec.hist) {
+    const k = `${r.gender}|${r.format}`;
+    const f = formats.get(k) || { format: r.format, m: 0, first: Infinity, last: -Infinity };
+    f.m += r.m; if (r.first) f.first = Math.min(f.first, r.first); if (r.last) f.last = Math.max(f.last, r.last);
+    formats.set(k, f);
+  }
+  const parts = [...formats.values()].map((f) => `${plural(f.m, noun(f.format, 1), noun(f.format, 2))}${Number.isFinite(f.first) ? ` (${years(f.first, f.last)})` : ''}`);
+  const record = parts.length
+    ? `Career record from Wikipedia’s national player lists: ${listText(parts)}.`
+    : 'Known here only from Wikipedia’s captaincy lists. The career lists this site reads cover Tests and ODIs, and have no row for them.';
+  const chips = countries.map((c) => h('span.pp-chip', teamLabel(c, { size: 16 })));
+  if (hand === 'right' || hand === 'left') chips.push(h('span.pp-chip', `${cap(hand)}-hand bat`));
+  if (BOWL_LABELS[bowl]) chips.push(h('span.pp-chip', BOWL_LABELS[bowl]));
+  if (wiki) {
+    chips.push(h('a.pp-chip.pp-link', { href: wikiUrl(wiki), rel: 'noopener' }, 'Wikipedia', h('span.sr-only', `: ${wiki}`)));
+  }
+  return h('header.pp-hero.fade-in', avatar,
+    h('div.pp-hero-text',
+      h('div.eyebrow', [countries.join(' / '), cap(role)].filter(Boolean).join(' · ') || 'Career record'),
+      h('h1.display.pp-name', name),
+      h('p.lede.pp-record', record),
+      chips.length ? h('div.pp-chips', chips) : null));
+}
+
+/** Why there is no ball-by-ball profile, format by format, from where Cricsheet's coverage starts. */
+function whyNote(rec, meta, countries) {
+  const spans = new Map();
+  const add = (gender, format, first, last, from) => {
+    if (!NOUN[format] || !first) return;
+    const k = `${gender}|${format}`;
+    const s = spans.get(k) || { gender, format, first, last: last || first, from };
+    s.first = Math.min(s.first, first); s.last = Math.max(s.last, last || first);
+    if (from === 'career') s.from = 'career';
+    spans.set(k, s);
+  };
+  for (const r of rec.hist) add(r.gender, r.format, r.first, r.last, 'career');
+  for (const r of rec.caps) if (r.level === 'international') add(r.gender, r.format, Number(r.first_year) || 0, Number(r.last_year) || 0, 'captaincy');
+  const linked = rec.ids.size > 0;
+  const men = [...spans.values()].some((s) => s.gender === 'male');
+  const footer = h('p.small.muted', rec.hist.length
+    ? 'This page shows their career totals from Wikipedia instead, so there are no ratings, splits or field plans.'
+    : 'This page shows their record as captain instead.');
+  const note = (lines) => h('aside.panel.pp-why', { 'aria-labelledby': 'pp-why-h' },
+    h('h2.pp-h4', { id: 'pp-why-h' }, 'Why there is no ball-by-ball profile'),
+    lines.map((t) => h('p.small', t)), footer);
+  // Afghanistan's men are missing for a reason that has nothing to do with the dates.
+  if (men && countries.length && countries.every((c) => c === 'Afghanistan')) {
+    return note(['Cricsheet withholds every match involving Afghanistan’s men, so none of their international deliveries are in the archive.']);
+  }
+  const lines = [...spans.values()].sort((a, b) => (FORMAT_RANK[a.format] ?? 9) - (FORMAT_RANK[b.format] ?? 9)).map((s) => {
+    const sc = meta?.scopes?.find((x) => x.key === `${s.gender === 'female' ? 'women' : 'men'}-${s.format.toLowerCase()}`);
+    if (!sc?.years?.length) return null;
+    const start = sc.years[0];
+    const head = `Cricsheet’s ball-by-ball record of ${genderWord(s.gender)} ${noun(s.format, 2)} starts in ${start}`;
+    if (s.last < start) return `${head}, after their ${s.format} ${s.from} ended in ${s.last}.`;
+    const ran = s.from === 'career' ? `They played ${noun(s.format, 2)} until ${s.last}` : `Their ${s.format} captaincy ran ${years(s.first, s.last)}`;
+    return linked ? `${head}. ${ran}, but the archive holds too few of their deliveries for a profile.`
+      : `${head}. ${ran}, but they are not matched to a player in Cricsheet’s archive.`;
+  }).filter(Boolean);
+  if (men && countries.includes('Afghanistan')) lines.push('Cricsheet also withholds every match involving Afghanistan’s men.');
+  if (!lines.length) {
+    lines.push(linked ? 'Cricsheet’s ball-by-ball archive holds too few of their deliveries for a profile.'
+      : 'They are not matched to a player in Cricsheet’s ball-by-ball archive.');
+  }
+  return note(lines);
+}
+
+function careerFormats(hist) {
+  const blocks = hist.map((r) => {
+    const f = careerFigures(r);
+    const items = [
+      ['Matches', fmt.n(f.matches)], ['Runs', fmt.n(f.runs)], ['Batting average', fmt.avg(f.avg)],
+      ['100s / 50s', f.h100 == null && f.h50 == null ? '–' : `${dash(f.h100)} / ${dash(f.h50)}`],
+      ['Wickets', fmt.n(f.wkts)], ['Bowling average', fmt.avg(f.bowlAvg)], ['Catches', fmt.n(f.ct)],
+    ];
+    if (f.st) items.push(['Stumpings', fmt.n(f.st)]);
+    const decade = r.decade ? `${r.decade}s` : null;
+    return h('section.pp-format', { 'aria-label': `${noun(r.format, 2)} for ${r.country}` },
+      h('div.pp-format-head', h('h3.pp-block-title', `${r.gender === 'female' ? 'Women’s ' : ''}${noun(r.format, 2)}`),
+        h('span.small.muted.pp-format-sub', teamLabel(r.country, { size: 16 }), r.first ? h('span', ` · ${years(r.first, r.last)}`) : null)),
+      statGrid(items),
+      r.base && decade ? h('p.tiny.muted.pp-era', `For comparison, ${genderWord(r.gender)} ${r.format} careers centred on the ${decade} averaged `
+        + `${fmt.avg(r.base.bat)} runs per dismissal and ${fmt.avg(r.base.bowl)} runs per wicket.`) : null);
+  });
+  return card('career', 'Career record', {
+    sub: 'Totals from Wikipedia’s lists of each country’s Test and ODI players (CC BY-SA 4.0). Batting average is runs per dismissal; bowling average is runs conceded per wicket.',
+  }, h('div.pp-formats', blocks),
+  h('p.tiny.faint.pp-note', 'A dash means none, or no figure in the list.',
+    hist.some((r) => r.h100 < 0 && r.h50 < 0) ? ' Several lists, most men’s Test lists among them, give no hundreds or fifties.' : ''));
 }
 
 function orderScopes(p, meta) {
@@ -348,14 +557,14 @@ function scopeTabs(p, scopes, meta, wanted) {
         panel.setAttribute('aria-labelledby', tab.id);
         clear(panel);
         panel.append(renderScope(scopes[i], p, meta));
-        if (fromUser) setQuery(key === ctl.first ? {} : { s: key });
+        if (fromUser) setQuery(key === ctl.first ? {} : { s: key }, { name: 'player', arg: p.id });
       }
       reveal(tab);
       if (focus) tab.focus();
     },
   };
   const start = wanted && ctl.has(wanted) ? wanted : ctl.first;
-  if (wanted && !ctl.has(wanted)) setQuery({});
+  if (wanted && !ctl.has(wanted)) setQuery({}, { name: 'player', arg: p.id });
   const el = card('scopes', 'By competition', {
     sub: 'Every delivery Cricsheet holds for this player, split by competition. Ratings compare them with others in the same competition.',
   }, h('div.pp-tabs-wrap', tablist), panel);
@@ -673,14 +882,28 @@ function howToRead(s, group) {
 }
 
 // ------------------------------------------------------------ captaincy
-function captaincyCard(p) {
-  const rows = (p.captaincy || []).slice().sort((a, b) =>
+/** Rows from a profile, or from site/data/captains.json for a career-record page. */
+function captaincyCard(captaincy) {
+  const rows = (captaincy || []).slice().sort((a, b) =>
     (a.level === b.level ? 0 : a.level === 'international' ? -1 : 1) || (Number(a.first_year) || 0) - (Number(b.first_year) || 0));
   if (!rows.length) {
     return card('captaincy', 'Captaincy', {},
       empty('Not listed as captain on the Wikipedia captaincy lists this site reads. Those lists cover national sides and the main franchise leagues.'));
   }
   const n = (v) => (v === '' || v == null ? null : Number(v));
+  // A link adds the record to the comparison left open on the Captains page when it fits there.
+  const saved = savedPage('captains')?.href;
+  // The header button prefers a record already in, or able to join, that comparison; then the longest.
+  const pool = rows[0].level === 'international' ? rows.filter((r) => r.level === 'international') : rows;
+  const links = new Map(rows.map((r) => [r, compareHref(r, saved)]));
+  const rank = (r) => (links.get(r).already ? 2 : links.get(r).others ? 1 : 0);
+  const lead = pool.reduce((a, b) => (rank(b) - rank(a) || (n(b.played) || 0) - (n(a.played) || 0)) > 0 ? b : a);
+  const leadLink = links.get(lead);
+  const rowLink = (r) => {
+    const c = links.get(r);
+    return h('a', { href: c.href, title: c.already ? 'Already in your comparison on the Captains page' : null },
+      c.already ? 'in your comparison' : c.others ? 'add to comparison' : 'compare');
+  };
   const table = h('table.data.pp-captaincy', { 'aria-label': 'Record as captain' },
     h('thead', h('tr',
       h('th', { scope: 'col' }, 'Team'), h('th', { scope: 'col' }, 'Format'), h('th', { scope: 'col' }, 'Span'),
@@ -688,14 +911,16 @@ function captaincyCard(p) {
       h('th.r', { scope: 'col', title: 'Drawn / tied / no result' }, 'D / T / NR'), h('th.r', { scope: 'col' }, 'Win %'),
       h('th', { scope: 'col' }, h('span.sr-only', 'Results')))),
     h('tbody', rows.map((r) => {
-      const span = r.ongoing === '1' ? `${r.first_year || '?'}–present` : years(r.first_year || null, r.last_year || r.first_year || null) || '–';
+      // captains.json rows carry no ongoing flag: an open span there means a current captain.
+      const ongoing = r.ongoing === '1' || (r.ongoing == null && !r.last_year && !!r.first_year);
+      const span = ongoing ? `${r.first_year || '?'}–present` : years(r.first_year || null, r.last_year || r.first_year || null) || '–';
       const src = r.source_page
         ? h('a', { href: `https://en.wikipedia.org/w/index.php?title=${encodeURIComponent(r.source_page.replace(/ /g, '_'))}${r.revid ? `&oldid=${encodeURIComponent(r.revid)}` : ''}`, rel: 'noopener', title: r.source_page }, 'source')
         : null;
       const where = r.level === 'franchise' ? r.competition || 'Franchise' : 'International';
       return h('tr',
         h('th', { scope: 'row' }, h('div', r.country_or_team && !r.country_or_team.includes(';') ? teamLabel(r.country_or_team, { size: 16 }) : (r.country_or_team || '–')),
-          h('div.tiny.faint', where, src ? ' · ' : '', src),
+          h('div.tiny.faint', where, src ? ' · ' : '', src, rows.length > 1 ? [' · ', rowLink(r)] : null),
           r.page_total === 'mismatch' ? h('div.tiny.pp-warn', `Totals differ on the source page${r.page_total_detail ? `: ${r.page_total_detail}` : ''}`) : null),
         h('td', r.format || '–'), h('td', span),
         h('td.r', dash(r.played)), h('td.r', dash(r.won)), h('td.r', dash(r.lost)),
@@ -705,7 +930,10 @@ function captaincyCard(p) {
     })));
   return card('captaincy', 'Captaincy', {
     sub: 'Results as captain, from Wikipedia’s lists of national and franchise captains. A dash means the list has no such column for that format.',
-    action: h('a.btn.sm', { href: `#/captains?ids=${encodeURIComponent(p.id)}` }, 'Compare captains'),
+    action: h('a.btn.sm', {
+      href: leadLink.href,
+      title: `${lead.level === 'franchise' ? lead.competition : lead.format} record for ${lead.country_or_team}${leadLink.others && !leadLink.already ? `, added to the ${leadLink.others} already in your comparison` : ''}`,
+    }, leadLink.already ? 'Open your comparison' : leadLink.others ? 'Add to your comparison' : 'Compare captains'),
   }, h('div.table-wrap', table));
 }
 

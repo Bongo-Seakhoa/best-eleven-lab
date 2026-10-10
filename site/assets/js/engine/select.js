@@ -1,7 +1,7 @@
 // Best XI orchestration: pool -> scores -> exact solve -> order, captain, bench.
 
 import { aggregate } from './aggregate.js';
-import { references, roles, scores, stats, utility, SLOT_TYPES } from './metrics.js';
+import { references, roles, scores, stats, utility, SLOT_TYPES, VIRTUAL_SLOTS } from './metrics.js';
 import { solve } from './solver.js';
 
 export const DEFAULT_WEIGHTS = { quality: 80, legacy: 0, experience: 12, leadership: 8 };
@@ -61,21 +61,33 @@ export function buildPool(scope, settings) {
   const agg = settings.team == null ? all : aggregate(scope, { ...aggOpts, team: settings.team });
   const P = scope.players;
   const types = settings.slots.filter((s) => s.count > 0).map((s) => s.type);
+  const concrete = new Set(types.flatMap((t) => VIRTUAL_SLOTS[t] ?? [t]));
+  const anyVirtual = types.some((t) => VIRTUAL_SLOTS[t]);
   const pool = [];
   for (const [pi, rec] of agg) {
     const info = { fam: P.fam[pi], wikiKeeper: P.wk ? !!P.wk[pi] : false };
-    const rs = roles(rec, scope, evidence, info);
+    // A player the user insists on is eligible whatever the evidence bar.
+    const locked = !!settings.locks?.has(P.id[pi]);
+    const rs = roles(rec, scope, locked ? 0 : evidence, info);
     if (!rs.size) continue;
     const sc = scores(rec, scope, ref, pi);
-    const util = {}, parts = {};
-    for (const t of types) {
+    const util = {}, parts = {}, pick = {};
+    const wanted = locked && anyVirtual ? new Set([...concrete, ...VIRTUAL_SLOTS.any]) : concrete;
+    for (const t of wanted) {
       if (!rs.has(t)) continue;
       const u = utility(t, sc, settings.weights);
       if (u) { util[t] = u.u; parts[t] = u.parts; }
     }
+    const best = (rolesIn) => rolesIn.filter((r) => util[r] != null).sort((a, b) => util[b] - util[a])[0];
+    for (const t of types) {
+      if (!VIRTUAL_SLOTS[t]) continue;
+      // His best role in the slot's group; a locked player outside it takes the slot with his best role overall.
+      const r = best(VIRTUAL_SLOTS[t]) ?? (locked ? best(VIRTUAL_SLOTS.any) : undefined);
+      if (r) { util[t] = util[r]; parts[t] = parts[r]; pick[t] = r; }
+    }
     pool.push({
       id: P.id[pi], pi, name: P.name[pi], team: primaryTeam(rec), roles: rs, sc,
-      stats: stats(rec), util, parts, overseas: P.overseas ? !!P.overseas[pi] : false,
+      stats: stats(rec), util, parts, pick, overseas: P.overseas ? !!P.overseas[pi] : false,
       available: available(scope, pi, settings.availability),
     });
   }
@@ -100,30 +112,132 @@ function shortfall(slots, cands, excludes) {
   }));
 }
 
+// Slot types that can stand in for one another when an eleven cannot be shaped
+// as asked: an extra all-rounder for a batter, a second spinner for a seamer.
+const STAND_IN = {
+  opener: ['batter'], batter: ['allrounder', 'finisher', 'opener'], finisher: ['batter', 'allrounder'],
+  allrounder: ['batter', 'finisher', 'pace', 'spin'], pace: ['allrounder', 'spin'], spin: ['allrounder', 'pace'],
+  keeper: [], bowler: ['allrounder'],
+};
+const BOWLING = new Set(['allrounder', 'pace', 'spin', 'bowler']);
+
+/**
+ * Compositions one or two moves from `slots` that keep a keeper, an opener, a
+ * seamer and no fewer than one bowling option below the original.
+ */
+function nearbyCompositions(slots, usable) {
+  const key = (xs) => xs.filter((x) => x.count > 0).map((x) => `${x.type}${x.count}`).sort().join(',');
+  const bowlingOf = (xs) => xs.filter((x) => BOWLING.has(x.type)).reduce((a, x) => a + x.count, 0);
+  const minBowling = bowlingOf(slots) - 1;
+  const count = (xs, t) => xs.find((x) => x.type === t)?.count ?? 0;
+  const ok = (xs) => count(xs, 'keeper') === count(slots, 'keeper') &&
+    (count(slots, 'opener') === 0 || count(xs, 'opener') >= 1) &&
+    (count(slots, 'pace') === 0 || count(xs, 'pace') >= 1) && bowlingOf(xs) >= minBowling;
+  const moves = (xs) => {
+    const out = [];
+    for (const from of xs) {
+      if (!from.count) continue;
+      for (const to of STAND_IN[from.type] || []) {
+        if (!usable.has(to)) continue;
+        const next = xs.map((x) => ({ ...x }));
+        next.find((x) => x.type === from.type).count--;
+        const t = next.find((x) => x.type === to);
+        if (t) t.count++; else next.push({ type: to, count: 1 });
+        out.push(next);
+      }
+    }
+    return out;
+  };
+  const seen = new Set([key(slots)]);
+  const rings = [];
+  let frontier = [slots];
+  for (let depth = 0; depth < 2; depth++) {
+    const ring = [];
+    for (const xs of frontier) {
+      for (const n of moves(xs)) {
+        const k = key(n);
+        if (seen.has(k)) continue;
+        seen.add(k);
+        ring.push(n);
+      }
+    }
+    rings.push(ring.filter(ok));
+    frontier = ring;
+  }
+  return rings;
+}
+
 /**
  * Full selection: XI in batting order, captain, bench, diagnostics. When the
  * evidence bar leaves a slot without enough eligible players, the bar is
- * lowered in steps and the result says so (`relaxed`).
+ * lowered in steps and the result says so (`relaxed`). If the default shape is
+ * still impossible and `settings.flexible` is set, the nearest shape that can
+ * be filled is used instead, the best one first, and reported (`reshaped`).
  */
 export function selectXI(scope, settings) {
   let relaxed = 1;
   let built, cands, res;
+  let slots = settings.slots;
+  let reshaped = null;
   const excludes = settings.excludes ?? new Set();
-  for (const step of [1, 0.6, 0.35, 0.2]) {
+  // A locked player with no record under these settings (another format, other
+  // years) is set aside and reported, rather than making every eleven impossible.
+  let locks = null, dropped = [];
+  const settle = (pool) => {
+    if (locks) return;
+    const ids = new Set(pool.map((c) => c.id));
+    locks = new Set([...(settings.locks ?? [])].filter((id) => ids.has(id)));
+    dropped = [...(settings.locks ?? [])].filter((id) => !locks.has(id));
+  };
+  const constraints = () => ({
+    maxOverseas: settings.maxOverseas ?? null, maxPerTeam: settings.maxPerTeam ?? null, locks, excludes,
+  });
+  const steps = [1, 0.6, 0.35, 0.2];
+  for (const step of steps) {
     built = buildPool(scope, { ...settings, evidence: settings.evidence * step });
-    cands = built.pool.filter((c) => c.available || settings.locks?.has(c.id));
-    res = solve(settings.slots, cands, {
-      maxOverseas: settings.maxOverseas ?? null, maxPerTeam: settings.maxPerTeam ?? null,
-      locks: settings.locks ?? new Set(), excludes,
-    });
+    settle(built.pool);
+    cands = built.pool.filter((c) => c.available || locks.has(c.id));
+    res = solve(slots, cands, constraints());
     relaxed = step;
     if (!res.error || settings.strictEvidence) break;
   }
+  if (res.error && settings.flexible) {
+    search: for (const step of settings.strictEvidence ? [1] : steps) {
+      const b = buildPool(scope, { ...settings, slots: Object.keys(STAND_IN).map((type) => ({ type, count: 1 })),
+                                   evidence: settings.evidence * step });
+      const c = b.pool.filter((x) => x.available || locks.has(x.id));
+      const usable = new Set(Object.keys(STAND_IN).filter((t) => c.some((x) => x.util[t] != null)));
+      for (const ring of nearbyCompositions(settings.slots, usable)) {
+        let best = null;
+        for (const xs of ring) {
+          const r = solve(xs, c, constraints());
+          if (!r.error && (!best || r.total > best.res.total)) best = { xs, res: r };
+        }
+        if (best) {
+          built = b; cands = c; res = best.res; slots = best.xs; reshaped = best.xs; relaxed = step;
+          break search;
+        }
+      }
+    }
+  }
+  if (res.error && (locks?.size || excludes.size) && !settings.slots.some((x) => VIRTUAL_SLOTS[x.type])) {
+    // The user's own picks and drops leave no eleven of this shape: keep them all in a free eleven.
+    const free = [{ type: 'any', count: 11 }];
+    for (const step of settings.strictEvidence ? [1] : steps) {
+      const b = buildPool(scope, { ...settings, slots: free, evidence: settings.evidence * step });
+      const c = b.pool.filter((x) => x.available || locks.has(x.id));
+      const r = solve(free, c, constraints());
+      if (!r.error) { built = b; cands = c; res = r; slots = free; reshaped = free; relaxed = step; break; }
+    }
+  }
   const { pool, ref } = built;
-  if (res.error) return { error: res.error, shortfall: shortfall(settings.slots, cands, excludes), pool, ref };
+  if (res.error) return { error: res.error, shortfall: shortfall(settings.slots, cands, excludes), pool, ref, droppedLocks: dropped };
   const byId = new Map(pool.map((c) => [c.id, c]));
-  let xi = res.picks.map((p) => ({ type: p.type, u: p.u, player: byId.get(p.id),
-                                   parts: byId.get(p.id).parts[p.type] }));
+  // A free slot shows the role the player fills it with; `slot` keeps the slot itself.
+  let xi = res.picks.map((p) => {
+    const player = byId.get(p.id);
+    return { type: player.pick[p.type] ?? p.type, slot: p.type, u: p.u, player, parts: player.parts[p.type] };
+  });
   xi = battingOrder(xi);
   let captain = null;
   // A current captain (squad page marker) leads when selected; otherwise the
@@ -142,7 +256,7 @@ export function selectXI(scope, settings) {
   const keeper = keepers.length ? keepers.reduce((a, b) => (share(b) > share(a) ? b : a)).player.id : null;
   const chosen = new Set(xi.map((x) => x.player.id));
   const bench = {};
-  for (const s of settings.slots) {
+  for (const s of slots) {
     if (!s.count) continue;
     bench[s.type] = cands.filter((c) => c.util[s.type] != null && !chosen.has(c.id) &&
                                         !(settings.excludes?.has(c.id)))
@@ -150,7 +264,7 @@ export function selectXI(scope, settings) {
       .map((c) => ({ player: c, u: c.util[s.type] }));
   }
   return { xi, total: res.total, optimal: res.optimal, captain, keeper, bench, pool, ref,
-           relaxed: relaxed < 1 ? relaxed : null, evidence: built.evidence };
+           relaxed: relaxed < 1 ? relaxed : null, evidence: built.evidence, slots, reshaped, droppedLocks: dropped };
 }
 
 /** What the team loses (in utility) if `id` must be included. */
@@ -165,6 +279,9 @@ export function whyNot(scope, settings, id, base) {
 
 /** Selection frequency under random +-25% perturbations of the weights. */
 export function stability(scope, settings, runs = 24) {
+  // Weights are what vary here; a shape found by reshaping stays fixed rather than being searched again.
+  const base = settings.flexible ? selectXI(scope, settings) : null;
+  if (base?.reshaped) settings = { ...settings, slots: base.slots, flexible: false };
   let seed = 7;
   const rnd = () => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648; };
   const counts = new Map();

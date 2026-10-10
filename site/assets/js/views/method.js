@@ -15,6 +15,7 @@ const SECTIONS = [
   { id: 'checks', short: 'Checks on every build', title: 'Checks we run on every build' },
   { id: 'model', short: 'The model up close', title: 'The model up close' },
   { id: 'profiles', short: 'Profiles and field plans', title: 'Profiles, matchups and field plans' },
+  { id: 'versus', short: 'XI vs XI', title: 'XI vs XI: from two elevens to a result' },
   { id: 'limitations', short: 'Limitations', title: 'Limitations' },
   { id: 'run', short: 'Run it yourself', title: 'Run it yourself' },
   { id: 'sources', short: 'Sources and licences', title: 'Sources and licences' },
@@ -169,12 +170,12 @@ export async function mount(root, route) {
   root.append(page);
 
   const results = await Promise.allSettled([data.meta(), data.validation(), data.runExpectancy(),
-    data.bowlerFamily(), data.reference()]);
-  const [metaR, valR, reR, famR, refR] = results;
+    data.bowlerFamily(), data.reference(), data.versusModel()]);
+  const [metaR, valR, reR, famR, refR, vsR] = results;
   const ctx = {
     reduced,
-    meta: ok(metaR), validation: ok(valR), re: ok(reR), fam: ok(famR), ref: ok(refR),
-    err: { meta: why(metaR), validation: why(valR), re: why(reR), fam: why(famR) },
+    meta: ok(metaR), validation: ok(valR), re: ok(reR), fam: ok(famR), ref: ok(refR), vs: ok(vsR),
+    err: { meta: why(metaR), validation: why(valR), re: why(reR), fam: why(famR), vs: why(vsR) },
   };
 
   clear(layout);
@@ -185,7 +186,7 @@ export async function mount(root, route) {
   if (ctx.err.meta) content.append(loadError('The site summary (meta.json)', ctx.err.meta));
   content.append(
     sectionPicking(ctx), sectionCoverage(ctx), sectionChecks(ctx), sectionModel(ctx),
-    sectionProfiles(ctx), sectionLimitations(ctx), sectionRun(ctx), sectionSources(ctx));
+    sectionProfiles(ctx), sectionVersus(ctx), sectionLimitations(ctx), sectionRun(ctx), sectionSources(ctx));
 
   function scrollTo(id, smooth) {
     const el = id && document.getElementById(`m-${id}`);
@@ -345,7 +346,7 @@ function buildSteps(ctx) {
           COMPONENTS.filter((c) => p.weights[c.key]).map((c) => h('span', { style: `width: ${(100 * p.weights[c.key]) / total}%; background: ${c.colour}` }))),
         h('span.tiny.muted.m-preset-hl', p.halfLife ? `half-life ${p.halfLife} yr${p.halfLife > 1 ? 's' : ''}` : 'no recency weighting'));
     })),
-    h('p.tiny.faint.m-flush', 'The lenses on the Pick an XI page. Every weight can also be set by hand.'));
+    h('p.tiny.faint.m-flush', 'The lenses on the Best XI page. Every weight can also be set by hand.'));
 
   const visual6 = () => {
     const rows = [['Tests', TEMPLATES.multi], ['ODIs', TEMPLATES.fifty], ['T20s and the Hundred', TEMPLATES.t20]];
@@ -353,7 +354,7 @@ function buildSteps(ctx) {
       h('ul.m-templates', rows.filter(([, t]) => t).map(([label, t]) => h('li',
         h('span.m-tpl-label', label),
         h('span.chips', t.map(([type, n]) => h('span.badge', `${n} × ${SLOT_TYPES[type]?.label ?? type}`)))))),
-      h('p.tiny.faint.m-flush', 'Default compositions. Each adds up to 11 and can be changed on the Pick an XI page.'));
+      h('p.tiny.faint.m-flush', 'Default compositions. Each adds up to 11 and can be changed on the Best XI page.'));
   };
 
   return [
@@ -579,6 +580,8 @@ function checkCard(c, ctx) {
   else if (c.strict || c.broad) body = careerBody(c);
   else if (c.scopes && c.split_year != null) body = oosBody(c, ctx);
   else if (c.cv_accuracy != null) body = classifierBody(c);
+  else if (c.groups && c.min_held_out != null) body = versusCheckBody(c);
+  else if (c.targets && c.split_year != null) body = debutCheckBody(c);
   else body = [h('p.small', c.summary || 'No summary recorded.')];
   return h('article.card.card-pad.m-check', { class: c.passed ? '' : 'is-failed' },
     h('div.m-check-head', h('h3', c.name), statusBadge(!!c.passed)),
@@ -1050,7 +1053,80 @@ function sectionProfiles(ctx) {
       h('p.tiny.faint', 'Starting fields: in Tests, four catchers for pace or two for spin, with two boundary riders. In limited overs the start depends on the phase, from two catchers and two out in the powerplay to none close and five out at the death.')));
 }
 
-// ---------------------------------------------------------- 6. limitations
+// ------------------------------------------------------------ 6. XI vs XI
+function versusCheckBody(c) {
+  const rows = Object.values(c.groups).sort((a, b) => b.held_out - a.held_out);
+  return [
+    h('p.small', `Win chances on the XI vs XI page are fitted on matches up to 2020 and scored on later ones the fit never saw. Each calibrated group with ${fmt.n(c.min_held_out)} or more held-out matches must beat a naive forecast on Brier score (lower is better).`),
+    table([['Group'], ['Held out', 'r'], ['Brier', 'r'], ['Naive', 'r'], ['Favourite won', 'r']],
+      rows.map((g) => h('tr', h('th', { scope: 'row' }, g.label), h('td.r.num', fmt.n(g.held_out)),
+        h('td.r.num', g.brier.toFixed(3)), h('td.r.num', g.brier_baseline.toFixed(3)), h('td.r.num', pct(g.accuracy, 1)))),
+      { caption: 'Held-out scores of the XI vs XI win chances' }),
+  ];
+}
+
+function debutCheckBody(c) {
+  const label = { 'men-test': "Men's Tests", 'men-odi': "Men's ODIs", 'men-t20i': "Men's T20Is",
+    'women-test': "Women's Tests", 'women-odi': "Women's ODIs", 'women-t20i': "Women's T20Is" };
+  const rows = [];
+  for (const [t, kinds] of Object.entries(c.targets)) {
+    for (const [k, v] of Object.entries(kinds)) {
+      rows.push(h('tr', h('th', { scope: 'row' }, `${label[t] ?? t}, ${k === 'bat' ? 'batting' : 'bowling'}`),
+        h('td.r.num', fmt.n(v.players)),
+        h('td.r.num', v.judged ? v.mse_prior.toFixed(3) : '–'), h('td.r.num', v.judged ? v.mse_zero.toFixed(3) : '–'),
+        h('td.r.num', v.judged ? v.mse_newcomer.toFixed(3) : '–')));
+    }
+  }
+  return [
+    h('p.small', `A short record is pulled towards a prior. Here the prior is what the player’s other cricket predicts, through transitions fitted on seasons before ${c.split_year}; it is scored on everyone who debuted in a format from ${c.split_year} on, using only what they had done before their debut, against their first two seasons there. Lower error is better; it must beat the old assumption that a newcomer is an average player.`),
+    table([['Format'], ['Debutants', 'r'], ['Prior', 'r'], ['Average player', 'r'], ['Average newcomer', 'r']], rows,
+      { caption: 'Error of debut priors on unseen debutants' }),
+  ];
+}
+
+function sectionVersus(ctx) {
+  const vs = ctx.vs;
+  const cal = vs?.calibration || {};
+  const method = vs?.calibrationMethod || {};
+  const groups = Object.entries(cal).sort((a, b) => (b[1].nTest || 0) - (a[1].nTest || 0));
+  const reliability = (g) => {
+    const bins = (g.bins || []).filter((b) => b.n > 0);
+    return h('div.m-rel', { role: 'img', 'aria-label': `${g.label}: predicted against observed win rates` },
+      bins.map((b) => h('div.m-rel-row',
+        h('span.m-rel-label.tiny', b.hi - b.lo < 0.03 ? `${pct(b.lo, 1)}–${pct(b.hi, 1)}` : `${pct(b.lo)}–${pct(b.hi)}`),
+        h('div.m-rel-track',
+          h('span.m-rel-pred', { style: { width: `${Math.round(100 * b.predicted)}%` }, title: `Predicted ${pct(b.predicted, 1)}` }),
+          h('span.m-rel-obs', { style: { left: `${Math.round(100 * b.observed)}%` }, title: `Observed ${pct(b.observed, 1)} of ${fmt.n(b.n)}` })),
+        h('span.tiny.faint.m-rel-n', fmt.n(b.n)))));
+  };
+  const skipped = Object.values(method.notCalibrated || {});
+  return section('versus',
+    'XI vs XI picks two elevens with the Best XI engine, turns each into runs per innings, and projects the match between them. Win chances are then fitted on real matches, not assumed.',
+    h('div.grid-2.m-cards',
+      h('div.card.card-pad.m-card',
+        h('h3', 'From players to runs per innings'),
+        h('p.small', 'Every player carries the model’s adjusted runs per ball: added when batting, saved when bowling, against a Full-Member average. A batter’s rate is spread over the share of an innings their position usually faces; the best bowlers take the most overs, within the format’s limit and near their usual workload. Overs a side cannot cover go to part-timers at the rate occasional bowlers really concede in that format. Innings lengths, position shares, par and that part-time rate come from the same archive.'),
+        h('p.small', 'Side A’s projected score is par plus A’s batting minus B’s bowling, and the reverse for B. In Tests the per-innings gap is multiplied by the innings a side usually bats.')),
+      h('div.card.card-pad.m-card',
+        h('h3', 'Sides from anywhere, in any shape'),
+        h('p.small', 'Each side can be picked from any international format or league and played as a Test, ODI or T20I. A player’s own record in the match format comes first, batting and bowling each on its own: over his side’s years if he did it then, otherwise his record up to then, with the same filters that format’s Best XI uses. Only what he never did in the format is rated on what his other cricket predicts. The shape can be the Best XI’s or free: the best eleven of any kind, all batters or all bowlers. Swaps lock one player in and another out, exactly as on the Best XI page.'),
+        h('p.small', 'Records do not carry across one to one. For each pair of competitions a slope and an offset are fitted on players who played both: in men’s cricket a league batting edge carries into T20Is almost whole but drops about 0.045 runs a ball, only about three quarters of it reaches ODIs, and less than half of a T20I edge reaches Tests. First-class records are not in the ratings, so Test priors lean on white-ball cricket.')),
+      h('div.card.card-pad.m-card', { style: { gridColumn: '1 / -1' } },
+        h('h3', 'Where the win chances come from'),
+        h('p.small', `For ${fmt.n(Object.values(cal).reduce((a, g) => a + (g.nTrain || 0) + (g.nTest || 0), 0))} real matches the two actual elevens were rated from the ${fmt.n(method.window ?? 4)} seasons before the game, so nothing from the match itself leaks in. A logistic curve (an ordered one with a draw band for Tests) turns the projected margin into chances, fitted to ${method.splitYear ?? 2020} and checked on the years after. A home-side term is fitted and then left out, so the page shows a neutral venue.`),
+        h('p.small', 'Calibration rates real elevens without priors: priors use the whole archive and would leak later seasons into earlier matches. Win chances for a side picked outside the match format rest on predicted ratings the calibration did not test.'),
+        h('p.small', 'Ratings know nothing about pitch, weather, toss, form beyond each side’s years, or injuries. The chances describe how often sides rated this far apart have won, not a forecast of any real match.'))),
+    groups.length ? h('div.m-sub',
+      h('h3', 'How well the chances held up on unseen matches'),
+      h('p.small', 'Each bar is a band of predicted chances for the favourite; the bar shows the average prediction and the dot what actually happened. Dots near the end of their bars mean the chances were honest.'),
+      h('div.m-rel-grid', groups.map(([, g]) => h('div.card.card-pad.m-rel-card',
+        h('div.m-rel-head', h('strong', g.label),
+          h('span.tiny.muted', `${fmt.n(g.nTest)} held out, ${g.testYears?.[0]}–${g.testYears?.[1]} · favourite won ${pct(g.accuracy, 1)}`)),
+        reliability(g))))) : loadError('The XI vs XI calibration (model/versus.json)', ctx.err.vs || 'no calibrated groups in this build'),
+    skipped.length ? h('p.tiny.faint', `No win chances for ${skipped.map((g) => `${g.label} (${g.reason})`).join('; ')}.`) : null);
+}
+
+// ---------------------------------------------------------- 7. limitations
 function sectionLimitations(ctx) {
   const oos = (ctx.validation?.checks || []).find((c) => c.scopes && c.split_year != null);
   let t20 = ['Strike rate can beat the adjustment in T20Is.', 'In the out-of-sample check, T20I strike rate alone has predicted later output slightly better than the adjusted value. See the checks above for this build’s figures.'];
@@ -1080,7 +1156,7 @@ function sectionLimitations(ctx) {
     h('ul.m-limits', items.map(([head, text]) => h('li', h('strong', head), ' ', text))));
 }
 
-// ------------------------------------------------------------------ 7. run
+// ------------------------------------------------------------------ 8. run
 function sectionRun(ctx) {
   const cmds = [
     ['Install the package from a clone of the repository.', 'pip install -e .'],
@@ -1102,7 +1178,7 @@ function sectionRun(ctx) {
     h('p.small', `A GitHub Actions workflow rebuilds the site from Cricsheet every week${end ? `; this build has matches up to ${end}` : ''}. The source is on `, h('a', { href: REPO, rel: 'noopener' }, 'GitHub'), '.'));
 }
 
-// -------------------------------------------------------------- 8. sources
+// -------------------------------------------------------------- 9. sources
 function sectionSources() {
   const rows = [
     { name: 'Cricsheet', href: 'https://cricsheet.org', what: 'Ball-by-ball match data and the people register that links player identities.',

@@ -16,6 +16,17 @@ export const SLOT_TYPES = {
   pace:       { label: 'Pace bowler',     short: 'PACE' },
   spin:       { label: 'Spin bowler',     short: 'SPIN' },
   bowler:     { label: 'Bowler',          short: 'BWL' },
+  // Free slots for XI vs XI: any player, a batting pick, a bowling pick.
+  any:        { label: 'Free pick',       short: 'ANY', virtual: true },
+  bat:        { label: 'Batting pick',    short: 'BAT', virtual: true },
+  bowl:       { label: 'Bowling pick',    short: 'BWL', virtual: true },
+};
+
+/** The roles each free slot draws on; a player fills it with his best one. */
+export const VIRTUAL_SLOTS = {
+  any: ['opener', 'batter', 'finisher', 'keeper', 'allrounder', 'pace', 'spin', 'bowler'],
+  bat: ['opener', 'batter', 'finisher', 'keeper', 'allrounder'],
+  bowl: ['allrounder', 'pace', 'spin', 'bowler'],
 };
 
 const div = (a, b) => (b > 0 ? a / b : null);
@@ -47,12 +58,23 @@ export function stats(rec) {
   };
 }
 
+/**
+ * A player's prior in runs per ball: what his record elsewhere predicts here
+ * (scope.players.priorBat / priorBowl, model/priors.py), or zero, an average
+ * Full-Member player, where a scope has no priors.
+ */
+export function priorOf(scope, pi) {
+  const P = scope.players;
+  return { bat: (pi != null && P.priorBat?.[pi]) || 0, bowl: (pi != null && P.priorBowl?.[pi]) || 0 };
+}
+
 /** Raw (unscaled) quality and legacy values for one aggregated player. */
-export function rawValues(rec, scope) {
+export function rawValues(rec, scope, pi = null, prior = priorOf(scope, pi)) {
   const { w, raw } = rec;
   const lb = scope.lambda.bat, lw = scope.lambda.bowl;
-  const batRate = w.b > 0 ? w.ba / (w.b + lb) : null;            // runs added per ball, shrunk
-  const bowlRate = w.wb > 0 ? -w.wc / (w.wb + lw) : null;        // runs saved per ball, shrunk
+  // A short record is pulled towards the prior, a long one barely moves.
+  const batRate = w.b > 0 ? (w.ba + lb * prior.bat) / (w.b + lb) : null;      // runs added per ball
+  const bowlRate = w.wb > 0 ? (-w.wc + lw * prior.bowl) / (w.wb + lw) : null; // runs saved per ball
   const perInnings = scope.family === 'multi';
   const ballsPerInn = raw.bi > 0 ? raw.b / raw.bi : 0;
   return {
@@ -105,11 +127,19 @@ const scale = (x, ref) => (x === null ? null : Math.max(0, Math.min(100, 50 + 15
  * every team, so team and World XIs share one scale.
  */
 export function references(agg, scope, evidence = 1) {
+  let memo = refCache.get(agg);
+  if (!memo) { memo = new Map(); refCache.set(agg, memo); }
+  if (!memo.has(evidence)) memo.set(evidence, computeReferences(agg, scope, evidence));
+  return memo.get(evidence);
+}
+const refCache = new WeakMap();
+
+function computeReferences(agg, scope, evidence) {
   const rule = FAMILY_RULES[scope.family];
   const bat = [], bowl = [], batL = [], bowlL = [], keep = [];
   let maxExp = 1, maxCapt = 1;
   for (const [pi, rec] of agg) {
-    const v = rawValues(rec, scope);
+    const v = rawValues(rec, scope, pi);
     if (rec.raw.b >= rule.minBat * evidence) { bat.push(v.batQ); batL.push(v.batL); }
     if (rec.raw.wb >= rule.minBowl * evidence) { bowl.push(v.bowlQ); bowlL.push(v.bowlL); }
     if (rec.raw.kp >= 5) keep.push(v.keepRate);
@@ -126,7 +156,7 @@ export function experienceMatches(rec, scope, pi) {
 }
 
 export function scores(rec, scope, ref, pi) {
-  const v = rawValues(rec, scope);
+  const v = rawValues(rec, scope, pi);
   const capt = scope.players.capt ? scope.players.capt[pi] || 0 : 0;
   const vc = scope.players.vc ? scope.players.vc[pi] || 0 : 0;
   const exp = experienceMatches(rec, scope, pi);

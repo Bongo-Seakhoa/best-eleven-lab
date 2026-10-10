@@ -1,0 +1,22 @@
+{
+ "_note": "Synthetic XI vs XI constants for tests; not measured.",
+ "national:male:t20": {
+  "balls": 100,
+  "par": 150,
+  "innings": 1,
+  "share": [
+   0.2,
+   0.15,
+   0.15,
+   0.1,
+   0.1,
+   0.1,
+   0.08,
+   0.05,
+   0.04,
+   0.02,
+   0.01
+  ],
+  "quota": 0.2
+ }
+}

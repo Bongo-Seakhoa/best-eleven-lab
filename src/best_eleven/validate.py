@@ -129,9 +129,36 @@ def predictive_check(model_dir: Path, split: int = 2021) -> dict:
             "split_year": split, "scopes": res}
 
 
+VERSUS_CHECK = "XI vs XI: held-out win chances beat a coin flip"
+
+
+def versus_check(calibration: dict, min_held_out: int = 200) -> dict:
+    """XI vs XI win chances on matches after the fitting years. Every calibrated
+    group with at least `min_held_out` such matches must beat its naive forecast
+    on Brier score: a coin flip, or for Tests the training years' draw rate with
+    decisive results split evenly. Recorded by the calibration step, which runs
+    after export because it rates players from the exported scopes."""
+    judged = {k: v for k, v in calibration.items() if v["nTest"] >= min_held_out}
+    beat = {k: v["brier"] < v["brierBaseline"] for k, v in judged.items()}
+    parts = [f"{v['label']} {v['brier']:.3f} vs {v['brierBaseline']:.3f} ({v['nTest']} matches)"
+             for k, v in judged.items()]
+    small = [v["label"] for v in calibration.values() if v["nTest"] < min_held_out]
+    summary = ("Brier, model vs naive: " + "; ".join(parts) if parts
+               else f"no calibrated group has {min_held_out} held-out matches")
+    if small:
+        summary += f". Too few held-out matches to judge: {', '.join(small)}"
+    return {"name": VERSUS_CHECK, "passed": bool(judged) and all(beat.values()), "summary": summary,
+            "min_held_out": min_held_out,
+            "groups": {k: {"label": v["label"], "held_out": v["nTest"], "brier": v["brier"],
+                           "brier_baseline": v["brierBaseline"], "log_loss": v["logLoss"],
+                           "log_loss_baseline": v["logLossBaseline"], "accuracy": v["accuracy"],
+                           "judged": k in judged} for k, v in calibration.items()}}
+
+
 def run_checks(warehouse: str | Path, model_dir: str | Path, reference: str | Path) -> dict:
     wh, md, ref = Path(warehouse), Path(model_dir), Path(reference)
-    checks = [margin_check(wh), career_check(md, wh, ref), predictive_check(md)]
+    from .model.priors import debut_validation
+    checks = [margin_check(wh), career_check(md, wh, ref), predictive_check(md), debut_validation(wh, md)]
     fam = md / "bowler_family_metrics.json"
     if fam.exists():
         f = json.loads(fam.read_text(encoding="utf-8"))

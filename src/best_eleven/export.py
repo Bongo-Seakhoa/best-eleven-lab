@@ -60,7 +60,7 @@ def scope_meta(scope: str, wh: Warehouse, leagues: dict, groups: dict) -> dict:
 
 
 def export_scope(scope: str, seasons: pd.DataFrame, ctx: dict, meta: dict, out: Path,
-                 inferred_fam: pd.Series | None = None) -> dict:
+                 inferred_fam: pd.Series | None = None, priors: dict | None = None) -> dict:
     db = ctx["db"]
     players = pd.Index(sorted(seasons["player"].unique()))
     local = pd.Series(np.arange(len(players)), index=players)
@@ -94,6 +94,12 @@ def export_scope(scope: str, seasons: pd.DataFrame, ctx: dict, meta: dict, out: 
     if ctx["captains"] is not None and flags["capt"].sum() > 0:
         P["capt"] = flags["capt"].astype(int).tolist()
         P["vc"] = flags["vc"].astype(int).tolist()
+    if priors and scope in priors["players"]:
+        # What each player's record elsewhere predicts here, in runs per ball (model/priors.py).
+        for kind, col in (("bat", "priorBat"), ("bowl", "priorBowl")):
+            pr = priors["players"][scope][kind].reindex(players).fillna(priors["targets"][scope][kind]["baseline"])
+            P[col] = [round(float(x), 4) for x in pr.to_numpy()]
+        meta = {**meta, "prior": {k: {"baseline": round(v["baseline"], 4)} for k, v in priors["targets"][scope].items()}}
     has_squads = bool(flags["squad"].sum())
     full = [int(t in FULL_MEMBERS) if scope in INTL_SCOPES else 1 for t in teams]
     doc = {**meta, "teams": teams, "teamsFull": full, "players": P, "seasons": cols,
@@ -114,6 +120,8 @@ def build_site_data(warehouse: str | Path, model_dir: str | Path, reference: str
     if inf_path.exists():
         f = pd.read_parquet(inf_path)
         inferred = f.set_index("player")["family"]
+    from .model.priors import site_priors
+    priors = site_priors(Path(warehouse), model_dir)
     scopes, flags_by_scope, metas = [], {}, {}
     for f in sorted((model_dir / "seasons").glob("*.parquet")):
         scope = f.stem
@@ -121,7 +129,7 @@ def build_site_data(warehouse: str | Path, model_dir: str | Path, reference: str
             continue
         seasons = pd.read_parquet(f)
         meta = scope_meta(scope, wh, ctx["leagues"], summary["groups"])
-        info = export_scope(scope, seasons, ctx, meta, out, inferred)
+        info = export_scope(scope, seasons, ctx, meta, out, inferred, priors)
         flags_by_scope[scope] = info.pop("_flags")
         metas[scope] = meta
         scopes.append({k: meta[k] for k in ("key", "label", "tier", "gender", "format", "family", "years", "matches")}
@@ -145,7 +153,31 @@ def build_site_data(warehouse: str | Path, model_dir: str | Path, reference: str
         meta["profiles"] = build_profiles(ctx, model_dir, out, metas, flags_by_scope, summary, inferred, log=log)
     dump(meta, out / "meta.json")
     dump(summary["run_expectancy"], out / "model" / "run_expectancy.json")
+    dump(priors_doc(priors, ctx["db"], out), out / "model" / "priors.json")
     return meta
+
+
+def priors_doc(priors: dict, db: pd.DataFrame, out: Path) -> dict:
+    """Fits, baselines and the priors of players a format's own scope file does not list,
+    so XI vs XI can project anyone into any international format."""
+    doc = {"targets": {}, "players": {}, "partTime": {u: (round(v, 4) if v is not None else None)
+                                                      for u, v in priors.get("partTime", {}).items()}}
+    for unit, kinds in priors["targets"].items():
+        doc["targets"][unit] = {k: {"baseline": round(v["baseline"], 4),
+                                    "fits": {s: {x: (round(y, 4) if isinstance(y, float) else y) for x, y in f.items()
+                                                 if x != "resid_var"} for s, f in v["fits"].items()}}
+                                for k, v in kinds.items()}
+        listed = set()
+        path = out / "scopes" / f"{unit}.json"
+        if path.exists():
+            listed = set(json.loads(path.read_text(encoding="utf-8"))["players"]["id"])
+        bat, bowl = priors["players"][unit]["bat"], priors["players"][unit]["bowl"]
+        ids = db.reindex(bat.index)["id"]
+        keep = [i for i, cid in zip(bat.index, ids) if isinstance(cid, str) and cid not in listed]
+        doc["players"][unit] = {"id": [str(ids[i]) for i in keep],
+                                "bat": [round(float(bat[i]), 4) for i in keep],
+                                "bowl": [round(float(bowl[i]), 4) for i in keep]}
+    return doc
 
 
 def _career(cj: str) -> dict:

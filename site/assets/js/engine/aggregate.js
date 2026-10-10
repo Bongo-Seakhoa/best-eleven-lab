@@ -17,6 +17,25 @@ export const SUM_COLS = [
  *   careerM (matches up to `to`), hs, teams: Map(team index -> matches), years}
  */
 export function aggregate(scope, opts) {
+  const key = `${opts.from}|${opts.to}|${opts.team ?? ''}|${opts.fullOnly ? 1 : 0}|${opts.halfLife || 0}`;
+  let memo = cache.get(scope);
+  if (!memo) { memo = new Map(); cache.set(scope, memo); }
+  let out = memo.get(key);
+  if (!out) {
+    out = compute(scope, opts);
+    memo.set(key, out);
+    if (memo.size > MEMO_MAX) memo.delete(memo.keys().next().value);
+  }
+  return out;
+}
+
+// Results are shared between callers and treated as read-only. Selection, its
+// evidence steps, reshaping, the stability runs and XI vs XI all ask for the
+// same few windows, so each is summed once per scope.
+const cache = new WeakMap();
+const MEMO_MAX = 48;
+
+function compute(scope, opts) {
   const s = scope.seasons;
   const n = s.p.length;
   const { from, to, team = null, fullOnly = false, halfLife = 0 } = opts;

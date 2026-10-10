@@ -1,0 +1,232 @@
+/* XI vs XI. Side colours arrive as --c (one side) or --ca / --cb (both). Mixing a
+   team colour with --ink keeps it readable on light and dark backgrounds alike. */
+
+.vs-hero {
+  position: relative; overflow: hidden; isolation: isolate; border-radius: var(--r-l); margin-bottom: 16px;
+  padding: 24px clamp(16px, 3vw, 32px) 26px; display: grid; gap: 14px; justify-items: center; text-align: center;
+  background: #0b130f url("../img/ground/hero-night.webp") center 46% / cover no-repeat;
+  color: #f6f1e4; box-shadow: var(--shadow-lg);
+}
+.vs-hero::before {
+  content: ""; position: absolute; inset: 0; z-index: -1;
+  background: radial-gradient(ellipse 70% 90% at 50% 58%, rgba(6, 12, 9, .3) 0%, rgba(6, 12, 9, .72) 62%, rgba(6, 12, 9, .9) 100%);
+}
+.vs-hero .eyebrow { color: #c9aa6c; }
+.vs-hero-row {
+  width: 100%; max-width: 980px; display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center; gap: clamp(10px, 3vw, 40px);
+}
+.vs-team { min-width: 0; display: grid; justify-items: center; gap: 6px; }
+.vs-badge {
+  width: 88px; height: 88px; border-radius: 50%; display: grid; place-items: center;
+  background: rgba(246, 241, 228, .08); border: 2px solid color-mix(in srgb, var(--c) 65%, #f6f1e4);
+  box-shadow: 0 0 0 6px rgba(0, 0, 0, .22), 0 0 44px color-mix(in srgb, var(--c) 50%, transparent);
+}
+.vs-badge img, .vs-badge svg { width: 54px; height: 54px; object-fit: contain; }
+.vs-badge img.flag { width: 58px; height: 40px; object-fit: cover; border-radius: 3px; }
+.vs-team-name { font: 600 clamp(19px, 3vw, 34px)/1.05 var(--font-display); letter-spacing: -.01em; overflow-wrap: anywhere; }
+.vs-team-sub { font-size: 12.5px; color: #d9dfd6; opacity: .9; }
+.vs-ring {
+  width: 56px; height: 56px; border-radius: 50%; display: grid; place-items: center; padding-left: .24em;
+  font: 600 13px/1 var(--font-brand); letter-spacing: .24em; text-transform: uppercase; color: #dcc38f;
+  border: 1px solid rgba(201, 170, 108, .6); background: rgba(6, 12, 9, .55);
+}
+.vs-verdict { width: 100%; max-width: 660px; display: grid; gap: 10px; }
+.vs-verdict-line { margin: 0; font: 600 clamp(17px, 2.1vw, 23px)/1.25 var(--font-display); color: #f6f1e4; }
+.vs-odds {
+  display: flex; height: 30px; border-radius: 999px; overflow: hidden;
+  background: rgba(246, 241, 228, .12); box-shadow: inset 0 0 0 1px rgba(246, 241, 228, .2);
+}
+.vs-odds-seg {
+  min-width: 0; display: grid; place-items: center; white-space: nowrap;
+  background: color-mix(in srgb, var(--c) 82%, #0b130f); color: #fff; font: 600 12.5px/1 var(--font-ui);
+  transition: flex-grow .6s var(--ease);
+}
+.vs-odds-seg.draw { background: rgba(246, 241, 228, .2); color: #f6f1e4; }
+.vs-odds-seg + .vs-odds-seg { box-shadow: -1px 0 0 rgba(6, 12, 9, .6); }
+
+/* -------------------------------------------------------------- arena */
+.vs-arena { margin-bottom: 14px; }
+.vs-arena-row { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px 22px; }
+.vs-field, .vs-field-col { display: grid; gap: 6px; min-width: 0; }
+.vs-field-label { font: 600 10.5px/1.2 var(--font-brand); letter-spacing: .16em; text-transform: uppercase; color: var(--muted); }
+.vs-arena-note { margin: 12px 0 0; }
+
+/* -------------------------------------------------------------- sides */
+.vs-sides { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: start; gap: 14px; margin-bottom: 18px; }
+.vs-side { display: grid; gap: 12px; border-top: 4px solid color-mix(in srgb, var(--c) 80%, var(--ink)); }
+.vs-side-head { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.vs-side-tag {
+  flex: none; width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center;
+  background: color-mix(in srgb, var(--c) 85%, #000); color: #fff; font: 700 12px/1 var(--font-brand);
+}
+.vs-side-title { min-width: 0; font-size: 15px; }
+.vs-years { display: flex; align-items: center; gap: 8px; }
+.vs-years .select { flex: 1; min-width: 0; }
+.vs-side-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.vs-swap { align-self: center; }
+
+/* ------------------------------------------------------------ results */
+.vs-results { display: grid; grid-template-columns: minmax(0, 1fr); gap: 18px; }
+.vs-h { font-size: clamp(20px, 2.2vw, 26px); margin-bottom: 6px; }
+
+.vs-scoreboard {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: 14px;
+  margin: 14px 0; padding: 20px clamp(12px, 3vw, 28px); border-radius: var(--r);
+  background: linear-gradient(180deg, #13291e 0%, #0b1912 100%); color: #f3ead2;
+  box-shadow: inset 0 0 0 1px rgba(201, 170, 108, .35), inset 0 2px 18px rgba(0, 0, 0, .45);
+}
+.vs-score, .vs-hist-side { min-width: 0; display: grid; justify-items: center; gap: 6px; text-align: center; }
+.vs-score-team { display: flex; align-items: center; gap: 8px; min-width: 0; font-weight: 600; color: #f3ead2; }
+.vs-score-team span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vs-score-num {
+  font: 600 clamp(42px, 7vw, 78px)/1 var(--font-display); font-variant-numeric: tabular-nums; color: #f6eccf;
+  text-shadow: 0 0 22px color-mix(in srgb, var(--c) 60%, transparent);
+}
+.vs-score-sub { font-size: 12px; color: #c8d1c6; }
+.vs-score-vs { font: 600 12px/1 var(--font-brand); letter-spacing: .2em; text-transform: uppercase; color: #c9aa6c; }
+.vs-cal { margin: 6px 0 0; }
+.vs-hist-dl { margin: 0; display: grid; gap: 6px; }
+.vs-hist-dl div { display: grid; gap: 2px; }
+.vs-hist-dl dt { font-size: 12px; color: #c8d1c6; }
+.vs-hist-dl dd { margin: 0; font: 600 clamp(20px, 3vw, 28px)/1.1 var(--font-display); color: #f6eccf; }
+
+/* Diverging rows: side A on the left, side B on the right, bar from the centre. */
+.vs-won-head, .vs-won-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.6fr) minmax(0, 1fr); gap: 12px; }
+.vs-won-head { margin: 12px 0 2px; font-size: 12px; font-weight: 600; color: var(--muted); }
+.vs-won-head span:first-child { text-align: right; }
+.vs-won-row { align-items: center; padding: 9px 0; border-top: 1px solid var(--line-2); }
+.vs-won-val { display: grid; gap: 2px; font-variant-numeric: tabular-nums; }
+.vs-won-val.a { text-align: right; }
+.vs-won-mid { display: grid; gap: 6px; }
+.vs-won-label { text-align: center; font-size: 13.5px; font-weight: 500; }
+.vs-won-track, .vs-slot-track { position: relative; height: 10px; border-radius: 999px; background: var(--line-2); }
+.vs-won-track::after, .vs-slot-track::after {
+  content: ""; position: absolute; left: 50%; top: -3px; bottom: -3px; width: 1px; background: var(--faint);
+}
+.vs-won-bar, .vs-slot-bar { position: absolute; top: 0; bottom: 0; transition: width .5s var(--ease); }
+.vs-won-bar.a, .vs-slot-bar.a { right: 50%; border-radius: 999px 0 0 999px; background: color-mix(in srgb, var(--ca) 78%, var(--ink)); }
+.vs-won-bar.b, .vs-slot-bar.b { left: 50%; border-radius: 0 999px 999px 0; background: color-mix(in srgb, var(--cb) 78%, var(--ink)); }
+.vs-won-total { display: flex; justify-content: space-between; gap: 12px; margin-top: 2px; padding-top: 10px; border-top: 1px solid var(--line); font-weight: 600; }
+
+.vs-slot {
+  display: grid; grid-template-columns: minmax(0, 1fr) minmax(80px, .6fr) minmax(0, 1fr); gap: 12px;
+  align-items: center; padding: 10px 0; border-top: 1px solid var(--line-2);
+}
+.vs-slot-p { min-width: 0; display: grid; gap: 3px; }
+.vs-slot-p.a { text-align: right; justify-items: end; }
+.vs-slot-name, .vs-slot-role { display: flex; align-items: center; gap: 6px; min-width: 0; max-width: 100%; }
+.vs-slot-name { font-weight: 600; }
+.vs-slot-name a { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-decoration: none; }
+.vs-slot-name a:hover { text-decoration: underline; }
+.vs-slot-role { flex-wrap: wrap; row-gap: 4px; font-size: 12px; color: var(--muted); }
+.vs-slot-p.a .vs-slot-role, .vs-slot-p.a .vs-slot-name { justify-content: flex-end; }
+.vs-slot-vals { font-size: 12px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.vs-slot-mid { display: grid; gap: 5px; justify-items: center; }
+.vs-slot-num { font: 600 15px/1 var(--font-display); color: var(--faint); }
+.vs-slot-track { width: 100%; height: 8px; }
+
+.vs-tape-table { width: 100%; }
+.vs-tape-table thead th { font-size: 12.5px; }
+table.data.vs-tape-table th { white-space: normal; }
+.vs-tape-table thead th:last-child { text-align: left; }
+.vs-tape-label { text-align: center; font-weight: 500; color: var(--ink-2); }
+.vs-tape-v { width: 32%; font-variant-numeric: tabular-nums; }
+.vs-tape-v.win { font-weight: 700; color: var(--ink); }
+.vs-tape-table td.vs-tape-v.win:first-child { background: color-mix(in srgb, var(--ca) 13%, transparent); box-shadow: inset -3px 0 0 color-mix(in srgb, var(--ca) 78%, var(--ink)); }
+.vs-tape-table td.vs-tape-v.win:last-child { background: color-mix(in srgb, var(--cb) 13%, transparent); box-shadow: inset 3px 0 0 color-mix(in srgb, var(--cb) 78%, var(--ink)); }
+
+.vs-shared { display: flex; align-items: center; gap: 6px; margin: 0; }
+.vs-notes ul { margin: 6px 0 0; padding-left: 18px; }
+.vs-notes li + li { margin-top: 4px; }
+
+/* -------------------------------------------------------- match chip */
+.vs-mid { display: grid; justify-items: center; gap: 8px; }
+.vs-match-chip {
+  padding: 4px 10px; border-radius: 999px; font: 600 11px/1 var(--font-brand); letter-spacing: .14em; text-transform: uppercase;
+  color: #0b130f; background: #dcc38f; box-shadow: 0 2px 10px rgba(0, 0, 0, .35); white-space: nowrap;
+}
+
+/* -------------------------------------------------- shape and changes */
+.vs-shape { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.vs-shape .select { flex: 1 1 160px; min-width: 0; }
+.vs-changes { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; padding: 8px 10px; border-radius: var(--r-s);
+  background: color-mix(in srgb, var(--c) 10%, var(--surface-2)); color: var(--ink-2); }
+.vs-changes .icon { color: color-mix(in srgb, var(--c) 80%, var(--ink)); }
+.vs-changes .btn { margin-left: auto; }
+
+/* ------------------------------------------------------- slot extras */
+.vs-swap-btn {
+  display: inline-flex; align-items: center; gap: 4px; margin-left: 6px; padding: 2px 8px; border-radius: 999px;
+  border: 1px solid var(--line); background: var(--surface); color: var(--ink-2); font: 500 11.5px/1.4 var(--font-ui); cursor: pointer;
+}
+.vs-swap-btn:hover { border-color: var(--pitch); color: var(--ink); }
+.vs-slot-p.a .vs-swap-btn { order: -1; margin-left: 0; margin-right: 6px; }
+.badge.vs-pick { background: var(--gold-soft); color: var(--ink); border-color: color-mix(in srgb, var(--gold) 45%, transparent); }
+.badge.vs-pred { background: var(--sky-soft); color: var(--ink); border-color: color-mix(in srgb, var(--sky) 40%, transparent); }
+
+/* ------------------------------------------------------- swap dialog */
+.vs-dialog {
+  width: min(720px, calc(100vw - 24px)); max-height: min(88vh, 900px); padding: 0; border: 1px solid var(--line);
+  border-radius: var(--r-l); background: var(--surface); color: var(--ink); box-shadow: var(--shadow-lg); overflow: hidden;
+}
+.vs-dialog[open] { display: flex; flex-direction: column; }
+.vs-dialog::backdrop { background: rgba(6, 12, 9, .55); backdrop-filter: blur(3px); }
+.vs-dlg-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 16px 20px; border-bottom: 1px solid var(--line); }
+.vs-dlg-head h2 { font-size: 22px; margin: 0; }
+.vs-swap-pair { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: stretch; gap: 10px; padding: 16px 20px 6px; }
+.vs-swap-card {
+  display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 10px; align-items: start; padding: 12px; border-radius: var(--r);
+  border: 1px solid var(--line); background: var(--surface-2);
+}
+.vs-swap-card > :last-child:not(.vs-swap-who) { grid-column: 1 / -1; }
+.vs-swap-pair > .vs-swap-card:last-child { border-color: color-mix(in srgb, var(--c) 55%, var(--line)); background: color-mix(in srgb, var(--c) 8%, var(--surface)); }
+.vs-swap-who { display: grid; gap: 2px; min-width: 0; }
+.vs-swap-who strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vs-swap-arrow { align-self: center; color: color-mix(in srgb, var(--c) 80%, var(--ink)); }
+.vs-swap-rec { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.vs-swap-rec .btn { margin-left: auto; }
+.vs-swap-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; padding: 10px 20px 0; }
+.vs-swap-tools .input { flex: 1 1 220px; min-width: 0; }
+.vs-swap-toggle { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); cursor: pointer; }
+.vs-swap-count { margin: 8px 20px 4px; }
+.vs-swap-list { list-style: none; margin: 0; padding: 0 12px 6px; overflow-y: auto; flex: 1 1 auto; min-height: 120px; }
+.vs-swap-row {
+  width: 100%; display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "name delta" "meta delta";
+  gap: 2px 12px; align-items: center; padding: 9px 10px; border: 0; border-radius: var(--r-s); background: none;
+  color: inherit; font: inherit; text-align: left; cursor: pointer;
+}
+.vs-swap-row:hover, .vs-swap-row:focus-visible { background: var(--surface-2); }
+.vs-swap-row-name { grid-area: name; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-weight: 600; min-width: 0; }
+.vs-swap-row-meta { grid-area: meta; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vs-swap-row .vs-delta { grid-area: delta; }
+.vs-delta { font: 600 13px/1.2 var(--font-ui); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.vs-delta.up { color: var(--strength); }
+.vs-delta.down { color: var(--weakness); }
+.vs-swap-more { margin: 6px 10px; }
+.vs-swap-note { margin: 0; padding: 10px 20px 16px; border-top: 1px solid var(--line-2); }
+
+@media (max-width: 860px) {
+  .vs-sides { grid-template-columns: minmax(0, 1fr); }
+  .vs-swap { justify-self: center; }
+  .vs-swap .icon { transform: rotate(90deg); }
+}
+@media (max-width: 560px) {
+  .vs-badge { width: 64px; height: 64px; }
+  .vs-badge img, .vs-badge svg { width: 38px; height: 38px; }
+  .vs-badge img.flag { width: 42px; height: 29px; }
+  .vs-ring { width: 40px; height: 40px; font-size: 11px; }
+  .vs-scoreboard { gap: 8px; }
+  .vs-won-head, .vs-won-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr) minmax(0, 1fr); gap: 8px; }
+  .vs-slot { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); grid-template-areas: "mid mid" "a b"; row-gap: 6px; }
+  .vs-slot-mid { grid-area: mid; grid-template-columns: auto minmax(0, 1fr); width: 100%; }
+  .vs-slot-p.a { grid-area: a; }
+  .vs-slot-p.b { grid-area: b; }
+  table.data.vs-tape-table th, table.data.vs-tape-table td { padding: 8px 6px; }
+  .vs-tape-v { width: 27%; }
+  .vs-swap-pair { grid-template-columns: minmax(0, 1fr); }
+  .vs-swap-arrow { justify-self: center; transform: rotate(90deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .vs-odds-seg, .vs-won-bar, .vs-slot-bar { transition: none; }
+}

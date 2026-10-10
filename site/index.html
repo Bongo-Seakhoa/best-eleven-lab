@@ -22,6 +22,7 @@
   <link rel="stylesheet" href="assets/css/players.css">
   <link rel="stylesheet" href="assets/css/captains.css">
   <link rel="stylesheet" href="assets/css/method.css">
+  <link rel="stylesheet" href="assets/css/versus.css">
   <script>
     try { const t = localStorage.getItem('be-theme'); if (t) document.documentElement.dataset.theme = t; } catch (e) {}
   </script>
@@ -35,11 +36,12 @@
       <span class="brand-name">Best Eleven<small>Cricket selection lab</small></span>
     </a>
     <nav class="nav" id="nav" aria-label="Main">
-      <a href="#/" data-route="select">Pick an XI</a>
-      <a href="#/players" data-route="players">Players</a>
-      <a href="#/captains" data-route="captains">Captains</a>
-      <a href="#/method" data-route="method">Method &amp; data</a>
-      <a href="#/credits" data-route="credits">Credits</a>
+      <a href="#/" data-route="select"><span class="nav-label">Best XI</span></a>
+      <a href="#/players" data-route="players"><span class="nav-label">Players</span></a>
+      <a href="#/captains" data-route="captains"><span class="nav-label">Captains</span></a>
+      <a href="#/versus" data-route="versus"><span class="nav-label"><span>XI</span> <span>vs XI</span></span></a>
+      <a href="#/method" data-route="method"><span class="nav-label"><span>Method</span> <span>&amp; data</span></span></a>
+      <a href="#/credits" data-route="credits"><span class="nav-label">Credits</span></a>
     </nav>
     <div class="topbar-end">
       <span class="asof" id="asof"></span>

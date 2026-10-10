@@ -1,4 +1,4 @@
-"""End-to-end pipeline: fetch -> ingest -> enrich -> model -> validate -> export."""
+"""End-to-end pipeline: fetch -> ingest -> enrich -> model -> validate -> export -> calibrate."""
 from __future__ import annotations
 
 import json
@@ -117,8 +117,46 @@ def export(p: Paths, *, profiles: bool = True, log=print) -> dict:
         fam = p.model / "bowler_family_metrics.json"
         if fam.exists():
             dump(json.loads(fam.read_text(encoding="utf-8")), p.site_data / "model" / "bowler_family.json")
+        from .model.versus import versus_constants, attach_part_time
+        # Calibration is added by calibrate(), which needs these scope files.
+        priors = json.loads((p.site_data / "model" / "priors.json").read_text(encoding="utf-8"))
+        groups = attach_part_time(versus_constants(p.warehouse), priors.get("partTime", {}))
+        dump({"groups": groups}, p.site_data / "model" / "versus.json")
         log(f"  {len(meta['scopes'])} scopes, {meta.get('profiles', {}).get('players', 0):,} profiles")
         return meta
+
+
+def calibrate(p: Paths, *, log=print) -> dict:
+    """Fit XI vs XI win chances on real matches and record their held-out check.
+    Runs the site engine through Node.js on the exported scopes, so it follows export."""
+    import shutil
+    from .export import dump
+    from .model.calibrate import calibrate_versus
+    from .validate import versus_check
+    node = shutil.which("node")
+    if not node:
+        raise RuntimeError("XI vs XI calibration runs the site engine and needs Node.js 18+ on PATH")
+    path = p.site_data / "model" / "versus.json"
+    if not path.exists():
+        raise RuntimeError(f"{path} is missing; run export first")
+    with _timed("calibrate XI vs XI", log):
+        groups = json.loads(path.read_text(encoding="utf-8"))["groups"]
+        res = calibrate_versus(p.warehouse, p.site_data, p.site / "cli" / "versus-calibrate.mjs", node, log=log)
+        dump({"groups": groups, "calibration": res["calibration"], "calibrationMethod": res["method"]}, path)
+        check = versus_check(res["calibration"])
+        record_check(p, check)
+        log(f"  [{'PASS' if check['passed'] else 'FAIL'}] {check['name']}: {check['summary']}")
+        return check
+
+
+def record_check(p: Paths, check: dict) -> None:
+    """Add or replace one check in data/model/validation.json and the site's copy."""
+    from .export import dump
+    path = p.model / "validation.json"
+    report = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {"checks": []}
+    report["checks"] = [c for c in report["checks"] if c["name"] != check["name"]] + [check]
+    path.write_text(json.dumps(report, indent=1, default=str), encoding="utf-8")
+    dump(report, p.site_data / "validation.json")
 
 
 def reference_summary(p: Paths) -> dict:

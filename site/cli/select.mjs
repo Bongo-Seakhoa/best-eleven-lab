@@ -15,7 +15,7 @@ if (opt.team && team < 0) {
 const res = selectXI(scope, {
   from, to, team, fullOnly: scope.tier === 'national' && opt.fullOnly !== false && team === null,
   halfLife: preset.halfLife, evidence: 1, availability: opt.availability ?? 'any',
-  weights: preset.weights, slots: defaultSlots(scope.family),
+  weights: preset.weights, slots: defaultSlots(scope.family), flexible: true,
   maxPerTeam: team === null && scope.tier === 'national' ? opt.maxPerTeam : null,
   maxOverseas: scope.tier === 'league' ? (opt.maxOverseas ?? scope.maxOverseas ?? null) : null,
 });
@@ -36,5 +36,7 @@ process.stdout.write(JSON.stringify({
   title: `${opt.team ?? (scope.tier === 'league' ? scope.label + ' all-franchise' : 'World')} XI: ${scope.label}, ${from}-${to}`,
   subtitle: `${preset.label} lens; availability ${opt.availability ?? 'any'}`,
   xi, total: res.total,
-  note: res.relaxed ? `Evidence bar lowered to ${Math.round(res.relaxed * 100)}% to fill every slot.` : '',
+  note: [res.relaxed ? `Evidence bar lowered to ${Math.round(res.relaxed * 100)}% to fill every slot.` : '',
+         res.reshaped ? `The usual composition could not be filled, so this XI plays ${res.reshaped.filter((s) => s.count > 0).map((s) => `${s.count} ${SLOT_TYPES[s.type].label.toLowerCase()}`).join(', ')}.` : '']
+    .filter(Boolean).join(' '),
 }));

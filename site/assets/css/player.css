@@ -130,6 +130,16 @@ a.pp-chip:hover { border-color: var(--faint); color: var(--ink); }
 .pp-howto { display: grid; gap: 8px; }
 .pp-howto ul { margin: 0; padding-left: 18px; display: grid; gap: 6px; font-size: 13.5px; color: var(--ink-2); max-width: 96ch; }
 
+/* ------------------------------------------- career record (no profile) */
+.pp-why { display: grid; gap: 6px; max-width: 900px; border-left: 3px solid var(--sky); }
+.pp-why p { margin: 0; max-width: 92ch; }
+.pp-formats { display: grid; gap: 22px; }
+.pp-format { display: grid; gap: 10px; min-width: 0; }
+.pp-format + .pp-format { padding-top: 20px; border-top: 1px solid var(--line); }
+.pp-format-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; }
+.pp-format-sub { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 0 4px; }
+.pp-era { margin: 0; max-width: 80ch; }
+
 /* ------------------------------------------------------------ responsive */
 @media (max-width: 1180px) {
   .pp-two { grid-template-columns: minmax(0, 1fr); }

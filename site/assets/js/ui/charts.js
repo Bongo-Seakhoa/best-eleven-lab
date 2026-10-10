@@ -172,8 +172,12 @@ function groundImages(view, cx = 0, cy = 0) {
   const left = 50 - (0.5 + (cx - ox) / span) * w, top = 50 - (0.5 - (cy - oy) / span) * w;
   const style = { width: `${w}%`, left: `${left}%`, top: `${top}%` };
   const name = close ? 'closeup' : 'field';
-  return [h('img.fp-bg.fp-day', { src: `assets/img/ground/${name}-day.webp`, alt: '', loading: 'lazy', decoding: 'async', style }),
-          h('img.fp-bg.fp-night', { src: `assets/img/ground/${name}-night.webp`, alt: '', loading: 'lazy', decoding: 'async', style })];
+  const day = h('img.fp-bg.fp-day', { src: `assets/img/ground/${name}-day.webp`, alt: '', loading: 'lazy', decoding: 'async', style });
+  const night = h('img.fp-bg.fp-night', { src: `assets/img/ground/${name}-night.webp`, alt: '', loading: 'lazy', decoding: 'async', style });
+  // Once the ground for this theme has loaded, fetch the other quietly, so a theme switch shows it at once.
+  day.addEventListener('load', () => { night.loading = 'eager'; }, { once: true });
+  night.addEventListener('load', () => { day.loading = 'eager'; }, { once: true });
+  return [day, night];
 }
 
 function groupLabel(names) {

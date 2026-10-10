@@ -6,7 +6,6 @@ import functools
 import http.server
 import json
 import shutil
-import socketserver
 import subprocess
 import sys
 import webbrowser
@@ -50,6 +49,14 @@ def _select(args, p: pl.Paths) -> int:
     return 0
 
 
+def _calibrate(p: pl.Paths) -> dict | None:
+    try:
+        return pl.calibrate(p)
+    except RuntimeError as e:
+        print(f"XI vs XI calibration failed: {e}", file=sys.stderr)
+        return None
+
+
 class _NoCacheHandler(http.server.SimpleHTTPRequestHandler):
     """Local preview only: always revalidate, so edits show on reload."""
 
@@ -63,7 +70,8 @@ class _NoCacheHandler(http.server.SimpleHTTPRequestHandler):
 
 def _serve(args, p: pl.Paths) -> int:
     handler = functools.partial(_NoCacheHandler, directory=str(p.site))
-    with socketserver.TCPServer(("127.0.0.1", args.port), handler) as httpd:
+    # Threaded, so a slow or stalled request (several tabs, parallel data fetches) never blocks the rest.
+    with http.server.ThreadingHTTPServer(("127.0.0.1", args.port), handler) as httpd:
         url = f"http://127.0.0.1:{args.port}/"
         print(f"Serving {p.site} at {url} (Ctrl+C to stop)")
         if args.open:
@@ -86,10 +94,11 @@ def main(argv=None) -> int:
     e.add_argument("--refresh", action="store_true", help="ignore the HTTP cache")
     sub.add_parser("model", help="run expectancy, adjusted values, aggregates, bowling-type model")
     sub.add_parser("validate", help="reconciliation and predictive checks")
-    x = sub.add_parser("export", help="write site/data")
+    x = sub.add_parser("export", help="write site/data, then calibrate XI vs XI (needs Node.js)")
     x.add_argument("--no-profiles", action="store_true")
-    sub.add_parser("build", help="ingest + model + validate + export (no network)")
-    a = sub.add_parser("all", help="fetch + ingest + enrich + model + validate + export")
+    sub.add_parser("calibrate", help="fit XI vs XI win chances on real matches (needs Node.js)")
+    sub.add_parser("build", help="ingest + model + validate + export + calibrate (no network)")
+    a = sub.add_parser("all", help="fetch + ingest + enrich + model + validate + export + calibrate")
     a.add_argument("--skip-enrich", action="store_true")
     s = sub.add_parser("select", help="pick a Best XI from the exported data")
     s.add_argument("--scope", default="men-test", help="e.g. men-test, women-odi, ipl, sa20")
@@ -120,6 +129,11 @@ def main(argv=None) -> int:
         return 0 if all(c["passed"] for c in report["checks"]) else 1
     elif args.cmd == "export":
         pl.export(p, profiles=not args.no_profiles)
+        check = _calibrate(p)
+        return 0 if check and check["passed"] else 1
+    elif args.cmd == "calibrate":
+        check = _calibrate(p)
+        return 0 if check and check["passed"] else 1
     elif args.cmd in ("build", "all"):
         if args.cmd == "all":
             pl.fetch(p)
@@ -129,7 +143,10 @@ def main(argv=None) -> int:
         pl.model(p)
         report = pl.validate(p)
         pl.export(p)
+        check = _calibrate(p)
         failed = [c["name"] for c in report["checks"] if not c["passed"]]
+        if check is None or not check["passed"]:
+            failed.append(check["name"] if check else "XI vs XI calibration")
         if failed:
             print("Validation failed: " + "; ".join(failed), file=sys.stderr)
             return 1

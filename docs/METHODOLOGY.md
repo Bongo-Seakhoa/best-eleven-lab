@@ -87,6 +87,16 @@ For a window `[from, to]` with optional recency half-life `h` (a season `t` year
 
 Quality and legacy are standardised against every qualified player of every team in the same window (50 is average, 15 points is one standard deviation), so a team XI and the World XI share one scale. Experience and leadership are log-scaled against the most experienced player and the longest-serving captain.
 
+### Priors for short records
+
+The λ in the quality row pulls a short record towards a prior. In international formats that prior is no longer zero (an average Full-Member player) but what the player's cricket elsewhere predicts: `(Σ value + λ × prior) ÷ (balls + λ)`. [src/best_eleven/model/priors.py](../src/best_eleven/model/priors.py) builds it on every export:
+
+- **Transitions, not exchange rates.** Nothing carries across one to one. For a target format and each source (the other international formats of that gender, and that gender's leagues taken together, one fit and one scale), it fits `target rate = α + β × source rate` by weighted least squares on players with at least 300 balls in both, each weighted by the reliability of his target rate. The source rate is shrunk for its own sample first. In men's cricket a league batting edge carries into T20Is almost whole (β ≈ 1.01) but every batter drops about 0.045 runs a ball; only about three quarters reaches ODIs (β ≈ 0.77); less than half of a T20I edge reaches Tests (β ≈ 0.42). League values already account for each league's strength through the competition term in section 3.
+- **The newcomer baseline.** The ball-weighted rate of players in their first season of the format. Debutants are below average, so this is lower than zero.
+- **Combining.** A player's prior is the precision-weighted mean of the baseline and his sources' predictions (weight: the source's reliability for him over the transition's residual variance). A thin record elsewhere moves him a little from the baseline; a long one moves him a lot.
+- **Checked on debutants.** On every build the transitions are refitted on seasons before 2019 (the shrinkage λ and the adjusted per-ball values themselves come from the whole-archive fit, as in the calibration of section 9, so the check is slightly optimistic) and score everyone who debuted in a format from 2019 on, using only what they had done before their debut, against their first two seasons there. The prior must beat the old zero prior in every format with enough debutants. In the October build it did in all ten, often by a lot (men's T20I batting: weighted squared error 0.197 against 0.329; women's T20I batting 0.303 against 0.812), and it edged the plain newcomer baseline in each. Women's Tests have too few debutants to judge.
+- **Limits.** First-class records are not in the ratings, so Test priors lean on white-ball cricket, the weakest links. A prior uses everything a player did elsewhere in the archive, later seasons included, which suits all-time and fantasy questions but means a historical window can know how a career turned out. Leagues keep the zero prior.
+
 ## 5. Roles
 
 Roles come from the record within the window. Minimum evidence is sized for a six-year window and scales with the window length (between 0.35× and 2×); the "evidence bar" control multiplies it.
@@ -162,6 +172,76 @@ A split is flagged a strength or weakness only when it differs from the player's
 
 The plan starts from a conventional base for the format, phase and bowler type, within the outfield limits. It then adds a catcher behind when edges run 20% above peers, adds or removes a boundary rider when boundary rates differ by 15%, and so on; each reason is listed with its index. Cricsheet records no shot or catch locations, so the counts come from data while the named positions follow convention, mirrored for left-handers.
 
-## 9. Validation
+## 9. XI vs XI
 
-[src/best_eleven/validate.py](../src/best_eleven/validate.py) runs on every build. The results are in [docs/ASSURANCE.md](ASSURANCE.md) and on the site's method page.
+Each side is a Best XI picked from any international format or league of one gender, in any shape, and both play one match format: a Test, ODI or T20I, or a league match when both sides come from leagues of the same format (one fit, one scale). The default is the Test World XI against the T20I World XI in an ODI.
+
+**Rating a player in the match format.** The player's own numbers come first; nothing is translated while a real record exists. When a side is picked from the match format, its players keep their own window ratings. Otherwise, for batting and for bowling separately:
+
+1. his record in the match format over his side's years, if he did it then: the same rating that format's own Best XI gives him (same team filter, and Full-Member matches only for a World XI);
+2. otherwise his whole record in the match format up to the side's last year, if he ever did it;
+3. only if he never did it in that format, what his other cricket predicts for it (the prior of section 4, from `model/priors.json` when the format's scope never saw him).
+
+So a batter who bowled no ODI overs in his side's years still bowls on his earlier ODI record, and nothing after a side's last year is used.
+
+In the default matchup most of the 22 sit on step 1. How much a player bowls comes from his usual workload in the match format, or failing that in the format he was picked from. The tale of the tape uses the same order, so both elevens are compared in the match format's own figures.
+
+**Shapes and swaps.** A side's shape is the Best XI's (openers, batters, a keeper, all-rounders, bowlers) or free: the best eleven of any kind, eleven batting picks or eleven bowling picks, filled by the same exact solver with a free slot taking each player's best role. A swap locks one player in and another out, exactly as on the Best XI page, and a locked player always gets a place, whatever the evidence bar or role. The swap list ranks every player with a record in the side's years by what he would add to the side's projected runs in that place.
+
+**From ratings to runs.** A player's rating is adjusted runs per ball from section 4, before it is scaled to 0–100: runs added per ball faced and runs saved per ball bowled, against a Full-Member average and shrunk for short records. A side becomes runs per innings in three steps ([site/assets/js/engine/versus.js](../site/assets/js/engine/versus.js)):
+
+- **Batting.** Each position faces its usual share of an innings. A batter adds `share × balls per innings × batting rate`.
+- **Bowling.** The best bowlers bowl first, each up to the format's quota (a fifth of the innings in limited overs, at most 35% in a Test innings) and no more than a quarter above their usual workload. If overs remain, the most-used regular bowlers take more, up to the quota. Overs still uncovered, as in an eleven of batters, go to anyone up to the quota, and an occasional bowler (under 5% of an innings usually) is charged no better than what part-timers really concede in that format: players who average an over a match or less, measured from the archive (in men's ODIs 0.21 runs a ball worse than an average bowler). An occasional bowler's own short record comes from spells chosen to suit him, not from bowling a full share.
+- **The match.** Each side scores `par + its batting − the other side's bowling`. The edge is the gap between those scores times the innings each side bats, in runs per match.
+
+**Where the constants come from.** [src/best_eleven/model/versus.py](../src/best_eleven/model/versus.py) measures them from the archive for each gender, format and tier: mean legal balls in a full-length first innings, mean first-innings runs (par), the share of those balls faced by each batting position, and innings per side in Tests. They use the five most recent seasons (internationals between Full Members, every league match), or every season when that gives fewer than 30 innings.
+
+| Group | Balls per innings | Par | Innings per side | Innings measured |
+|---|---:|---:|---:|---:|
+| Men's Tests | 547.6 | 325.0 | 1.89 | 185 |
+| Men's ODIs | 279.5 | 264.1 | 1 | 287 |
+| Men's T20Is | 118.3 | 171.8 | 1 | 401 |
+| Women's ODIs | 281.1 | 236.9 | 1 | 239 |
+| Women's T20Is | 118.8 | 142.7 | 1 | 333 |
+| Men's T20 leagues | 118.2 | 169.0 | 1 | 2,685 |
+
+All six come from 2022–26.
+
+**Win chances.** An edge in runs says nothing about chances until it is compared with real results. [src/best_eleven/model/calibrate.py](../src/best_eleven/model/calibrate.py) does that on every build:
+
+1. Every completed match in a site scope (internationals between Full Members, every league match) gives two real elevens. Each player is rated from that scope's seasons in the four years before the match, with a three-year half-life, so the match itself never feeds its own forecast. Priors are left out: they use the whole archive and would leak later seasons into earlier matches, so a player with no record in the window counts as average, and so do overs no rated bowler covers (a real eleven's unknown player is a selected cricketer, not a batter forced to bowl). The batting order is the side's first-innings order, then anyone who did not bat. The site's own engine projects the edge, through [site/cli/versus-calibrate.mjs](../site/cli/versus-calibrate.mjs).
+2. Some matches are left out: no results, matches decided by a rain rule or awarded, ties settled by a super over, limited-overs matches with shortened innings, and matches where either side has fewer than six players with a record in the window. A side of newcomers projects as average by construction, and the page compares rated players. The October build kept 10,608 matches.
+3. Limited overs: `P(side A wins) = 1 / (1 + e^(−k × edge))`, with no intercept, so equal sides are even; a tie counts as half a win. Tests use an ordered model with a draw band: `P(A wins) = σ(k × edge − c)`, `P(B wins) = σ(−k × edge − c)`, and the draw takes the rest. A home-side term is fitted at the same time (home side from section 3), so home advantage does not inflate `k`. The stored `k` and `c` are the neutral-venue values.
+4. Parameters are fitted on matches up to 2020. Matches from 2021 onwards are held out and scored with the Brier score and log loss. The naive forecast is a coin flip in limited overs; in Tests it is the training years' draw rate, with decisive results split evenly.
+5. A group gets win chances only if its training years already show the curve holds up. Each of the last three training seasons is forecast from a fit on the seasons before it, and together those forecasts must beat the naive one on Brier score. The held-out years take no part in that decision.
+
+| Group | Fitted on | k | Home advantage | Held out (2021–26) | Brier, model vs naive | Log loss, model vs naive | Favourite won |
+|---|---|---:|---:|---:|---|---|---:|
+| Men's Tests | 640 (2003–20) | 0.0077, c 0.54 | 78 runs | 217 | 0.581 vs 0.613 | 0.981 vs 1.009 | 60% |
+| Men's ODIs | 1,339 (2003–20) | 0.042 | 8 runs | 302 | 0.218 vs 0.249 | 0.630 vs 0.693 | 68% |
+| Men's T20Is | 476 (2007–20) | 0.049 | 2 runs | 474 | 0.225 vs 0.250 | 0.642 vs 0.693 | 65% |
+| Women's ODIs | 177 (2011–20) | 0.052 | 3 runs | 257 | 0.160 vs 0.249 | 0.487 vs 0.693 | 77% |
+| Women's T20Is | 279 (2010–20) | 0.096 | 4 runs | 340 | 0.187 vs 0.250 | 0.565 vs 0.693 | 71% |
+| Men's T20 leagues | 2,548 (2009–20) | 0.044 | 3 runs | 2,720 | 0.244 vs 0.249 | 0.684 vs 0.693 | 55% |
+
+The Test Brier score adds up the squared errors over win, draw and loss, so it runs higher than the two-outcome scores. "Favourite won" counts decisive results only. Home advantage is the home term divided by `k`, in runs per match.
+
+As a guide, a 10-run edge makes a men's T20I side a 62% favourite, and a franchise T20 side 61%. A 20-run edge in a men's ODI gives 69%. In a Test, a 100-run edge gives 56% to win, 23% to draw and 21% to lose; level sides get 37% each with a 26% chance of a draw.
+
+**Groups without win chances.** The page still projects runs for these, but shows no percentages:
+
+- Women's T20 leagues. Forecasts of 2019 and 2020 from earlier seasons scored 0.251 against 0.250 for a coin flip, so the group was not calibrated. The held-out years agree: 0.253 against 0.249.
+- The men's and women's Hundred. Both began in 2021, so nothing comes before the split to fit on.
+- Women's Tests. Only 24 matches.
+
+**What the chances mean, and what they don't.** They describe a neutral venue, an average pitch and no toss. Form counts only through the window and its recency weighting. Conditions, injuries, tactics and the toss are all outside the model. In franchise T20 the chances stay close to even: player ratings explain little of who wins there. Draw chances in Tests reflect 2003–20. From 2021, held-out Tests ended in a draw less often than forecast: 12% against about 23%.
+
+One leak remains. The opposition adjustment in section 3 is fitted on the whole archive, so a player's adjusted record before a held-out match carries opponent and context effects estimated partly from later matches. The held-out scores may therefore flatter the model slightly.
+
+### What the calibration does not cover
+
+The win-chance curve was fitted on real elevens picked for the match format. A side picked elsewhere (the Test World XI in an ODI) or in a free shape leans more on predicted ratings and on the part-time bowling rate, which the curve never saw; the page says so beside the chances. The debut check in section 10 measures how good those predictions are for newcomers.
+
+## 10. Validation
+
+[src/best_eleven/validate.py](../src/best_eleven/validate.py) runs on every build. The debut-prior check (section 4) refits the transitions on seasons before 2019 and fails if, in any format with at least 25 debutants since, the prior does not beat the zero prior on their first two seasons. The XI vs XI check runs after export, because it rates players from the exported scopes. The build fails when any calibrated group with at least 200 held-out matches does not beat its naive forecast on Brier score. The results are in [docs/ASSURANCE.md](ASSURANCE.md) and on the site's method page.

@@ -13,6 +13,13 @@
               linear-gradient(0deg, rgba(6, 12, 9, .55) 0%, rgba(6, 12, 9, 0) 55%);
 }
 .hero-text { display: grid; gap: 6px; max-width: 640px; }
+.select-hero { flex-wrap: wrap; justify-content: space-between; gap: 16px 24px; }
+.hero-cta {
+  flex: none; color: #f6f1e4; background: rgba(246, 241, 228, .1); border-color: rgba(246, 241, 228, .32);
+  backdrop-filter: blur(6px);
+}
+.hero-cta:hover { background: rgba(246, 241, 228, .18); border-color: rgba(246, 241, 228, .6); }
+.hero-cta .icon { color: #c9aa6c; }
 .select-hero .eyebrow { color: #c9aa6c; }
 .select-hero h1.display { color: #f6f1e4; }
 .select-hero .lede { color: #d9dfd6; }
@@ -73,8 +80,28 @@
 .xi-row:hover .xi-more, .xi-more:focus-visible { opacity: 1; }
 
 .bench-type { padding: 10px 0 4px; border-top: 1px solid var(--line-2); margin-top: 8px; }
-.bench-row { display: flex; align-items: center; gap: 8px; padding: 4px 0; font-size: 14px; }
-.bench-row a { text-decoration: none; font-weight: 500; }
+/* Next-in-line rows follow the card's own width: in a narrow card the name takes
+   the first line and team, score, gap and lock share the second. */
+.bench-card { container-type: inline-size; }
+.bench-row {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto auto auto; align-items: center;
+  grid-template-areas: "name name name name" "team score gap lock";
+  column-gap: 10px; row-gap: 1px; padding: 6px 0; font-size: 14px;
+}
+.bench-row + .bench-row { border-top: 1px dashed var(--line-2); }
+.bench-row > a { grid-area: name; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-decoration: none; font-weight: 500; }
+.bench-team { grid-area: team; min-width: 0; }
+.bench-team .team-label { max-width: 100%; }
+.bench-team .team-label > span:not(.team-badge) { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bench-u { grid-area: score; text-align: right; }
+.bench-gap { grid-area: gap; min-width: 3.4em; text-align: right; color: var(--weakness); }
+.bench-row > .btn { grid-area: lock; }
+.bench-row .btn-label { display: none; }
+@container (min-width: 440px) {
+  .bench-row { grid-template-columns: minmax(0, 1fr) minmax(0, max-content) auto auto auto; grid-template-areas: "name team score gap lock"; padding: 4px 0; }
+  .bench-row + .bench-row { border-top: 0; }
+  .bench-row .btn-label { display: inline; }
+}
 .whynot-out { margin-top: 12px; display: grid; gap: 8px; justify-items: start; }
 
 .cand-controls { display: grid; grid-template-columns: minmax(0, 1fr) 200px; gap: 10px; margin-bottom: 12px; }

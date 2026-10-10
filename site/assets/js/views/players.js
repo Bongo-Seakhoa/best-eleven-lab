@@ -3,11 +3,12 @@ import { h, s, clear, fmt, initials, debounce } from '../ui/dom.js';
 import { teamBadge } from '../ui/teams.js';
 import * as data from '../data.js';
 import { setQuery } from '../app.js';
+import { rememberTitle } from '../memory.js';
 
 const PAGE = 60;
 const MAX_CHIPS = 6;
 
-const BOWL_LABELS = {
+export const BOWL_LABELS = {
   RF: 'Right-arm fast', RFM: 'Right-arm fast-medium', RMF: 'Right-arm medium-fast', RM: 'Right-arm medium',
   LF: 'Left-arm fast', LFM: 'Left-arm fast-medium', LMF: 'Left-arm medium-fast', LM: 'Left-arm medium',
   OB: 'Off-spin', LB: 'Leg-spin', SLA: 'Left-arm orthodox', LWS: 'Left-arm wrist-spin',
@@ -598,6 +599,19 @@ function directory(page, P, route, isAlive) {
     return list;
   }
 
+  /** Short title for the return link to this directory, naming the search and filters in force. */
+  function directoryTitle() {
+    const bits = [];
+    const q = st.q.trim();
+    if (q) bits.push(`“${q.length > 20 ? `${q.slice(0, 19)}…` : q}”`);
+    if (st.c) bits.push(st.c === 'none' ? 'no country' : st.c);
+    if (st.r) bits.push(st.r === 'none' ? 'no role' : (ROLE_GROUPS.find((g) => g.key === st.r)?.label || roleOpts.get(st.r)?.dataset.base || st.r).toLowerCase());
+    if (st.s) bits.push(P.meta.scopes.find((x) => x.key === st.s)?.tier === 'national' ? P.scopeLabel(st.s).replace(/'/g, '’') : P.chipLabel(st.s));
+    if (st.a) bits.push('active');
+    const t = bits.length ? `Directory: ${bits.join(', ')}` : 'Directory';
+    return t.length > 40 ? `${t.slice(0, 39).trimEnd()}…` : t;
+  }
+
   // ----------------------------------------------------------------- flow
   function apply() {
     compute();
@@ -605,7 +619,8 @@ function directory(page, P, route, isAlive) {
     renderResults();
     renderCount();
     renderNotice();
-    setQuery(toQuery());
+    setQuery(toQuery(), route);
+    rememberTitle('players', directoryTitle());
   }
 
   const first = readQuery(route.query);

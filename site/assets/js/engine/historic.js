@@ -6,6 +6,7 @@
 // for short careers. Legacy is runs (or wickets) above the era average.
 
 import { solve } from './solver.js';
+import { VIRTUAL_SLOTS } from './metrics.js';
 
 export const HISTORIC_TEMPLATE = [
   { type: 'batter', count: 5 }, { type: 'keeper', count: 1 }, { type: 'allrounder', count: 1 },
@@ -110,7 +111,11 @@ export function historicPool(H, settings) {
       const tot = w.quality + w.legacy + w.experience + w.leadership;
       util[t] = (w.quality * q + w.legacy * (l ?? 0) + w.experience * sc.exp + w.leadership * sc.lead) / (tot || 1);
     }
-    out.push({ id: r.key, rec: r, name: r.name, team: r.countries[0], roles, sc, util,
+    const pick = {};
+    for (const [v, rs] of Object.entries(VIRTUAL_SLOTS)) {
+      for (const r of rs) if (util[r] != null && (util[v] == null || util[r] > util[v])) { util[v] = util[r]; pick[v] = r; }
+    }
+    out.push({ id: r.key, rec: r, name: r.name, team: r.countries[0], roles, sc, util, pick,
                stats: { matches: r.m, runs: r.runs, avg: v.avg, wkts: r.wkts, bowlAvg: v.bowlAvg,
                         eraBat: r.eraBat, eraBowl: r.eraBowl, batIndex: v.batIndex, bowlIndex: v.bowlIndex,
                         hundreds: r.h100, catches: r.ct, stumpings: r.st, span: `${r.first}-${r.last}` } });
@@ -126,7 +131,7 @@ export function selectHistoric(H, settings) {
   if (res.error) return { error: res.error, pool };
   const byId = new Map(pool.map((c) => [c.id, c]));
   const order = { batter: 0, keeper: 1, allrounder: 2, pace: 3, spin: 3, bowler: 3 };
-  const xi = res.picks.map((p) => ({ type: p.type, u: p.u, player: byId.get(p.id) }))
+  const xi = res.picks.map((p) => ({ type: byId.get(p.id).pick[p.type] ?? p.type, slot: p.type, u: p.u, player: byId.get(p.id) }))
     .sort((a, b) => order[a.type] - order[b.type] ||
       (order[a.type] === 3 ? (b.player.sc.batQ ?? 0) - (a.player.sc.batQ ?? 0)
                            : (b.player.sc.batQ ?? 0) - (a.player.sc.batQ ?? 0)));
