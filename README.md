@@ -39,7 +39,7 @@ Every limited-overs ball is valued by how much it changes the batting side's exp
 | Check | Latest result |
 |---|---|
 | Winning margins rebuilt from deliveries | 99.96% of 9,985 run margins and 99.99% of 10,327 wicket margins exact |
-| Career totals vs Wikipedia (strict set: careers wholly inside coverage, fresh infoboxes) | 124 Test players, 100% exact on matches, runs and wickets |
+| Career totals vs Wikipedia (strict set: careers wholly inside coverage, infoboxes fresh at the snapshot, Cricsheet counted to each infobox's date) | 123 Test players, 100% exact on matches, runs and wickets |
 | Earlier rating vs later output (Spearman, batters) | adjusted beats raw in Tests 0.64 vs 0.60, ODIs 0.45 vs 0.40, T20Is 0.35 vs 0.31, IPL 0.40 vs 0.35 |
 | Pace/spin classifier (5-fold CV) | 89% accuracy, AUC 0.965; labels kept only above 0.85 confidence (94% accurate) |
 | Debut priors on 2019–26 debutants (fitted before 2019) | Beat the old average-player prior in all ten judged formats and disciplines, e.g. men's T20I batting error 0.197 vs 0.329, women's T20I batting 0.303 vs 0.812 |
