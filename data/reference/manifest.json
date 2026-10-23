@@ -1,5 +1,137 @@
 {
- "fetched_at": "2026-10-09T12:00:00+00:00",
+ "fetched_at": "2026-10-23T00:06:14+00:00",
  "source": "English Wikipedia and Wikidata (CC BY-SA 4.0 / CC0)",
- "note": "Snapshots refreshed and independently spot-checked on 9 October 2026."
+ "modules": {
+  "careers": {
+   "rows": 11609,
+   "lists": 108,
+   "failed_pages": [],
+   "linked_rate": 0.9434,
+   "cricsheet_match_rate": 0.8736,
+   "cricsheet_match_rate_linked": 0.8745,
+   "name_fallback_ids": 687
+  },
+  "captains": {
+   "page_problems": [
+    "List of Scotland national cricket captains: table \"Women's Captain > Scottish Women's Captain\" skipped, format not inferable"
+   ],
+   "rows": 3198,
+   "totals": 1528,
+   "rows_linked": 3194,
+   "rows_cricsheet": 3044,
+   "totals_cricsheet": 1410,
+   "fallback_ids": 7,
+   "fallback_ids_rejected": [
+    "Rahul Sharma (Hong Kong): 714cf6e4"
+   ],
+   "links_not_cricketers": [
+    "Aryan Khan"
+   ]
+  },
+  "squads": {
+   "rows": 1958,
+   "teams": 89,
+   "linked_share": 0.9055,
+   "cricsheet_match_rate": 0.9428,
+   "cricsheet_match_rate_linked": 0.9836,
+   "title_basis": {
+    "link": 1762,
+    "": 128,
+    "non-player link": 36,
+    "redlink": 21,
+    "name": 11
+   },
+   "source_kind": {
+    "team article": 80,
+    "league season article": 9
+   },
+   "failed": [
+    "Afghanistan (female): Afghanistan women's national cricket team: no squad section/table",
+    "Oman (female): Oman women's national cricket team: no squad section/table",
+    "Canada (female): Canada women's national cricket team: no squad section/table"
+   ],
+   "duplicates_dropped": 1,
+   "id_basis": {
+    "wikipedia": 1710,
+    "team name match": 128,
+    "cricinfo profile": 8
+   },
+   "status": {
+    "replacement": 11,
+    "withdrawn": 6,
+    "pre-signing": 2,
+    "wildcard": 1
+   },
+   "appearance_check": {
+    "counts": {
+     "team": 1672,
+     "league": 77,
+     "none": 62,
+     "no data": 35
+    },
+    "no_data_teams": [
+     "Afghanistan (male)"
+    ],
+    "team_share": 0.9232,
+    "team_or_league_share": 0.9658,
+    "by_level": {
+     "international": 0.9881,
+     "franchise": 0.9426
+    },
+    "by_title_basis": {
+     "link": 0.9635,
+     "name": 1.0
+    }
+   }
+  },
+  "players": {
+   "candidates": 7024,
+   "extra_titles": 6795,
+   "titles_requested": 10478,
+   "fetched": 10478,
+   "missing": [],
+   "not_biography": [
+    "List of Sikkim cricketers"
+   ],
+   "extra_skipped": [],
+   "ids_dropped_name_mismatch": [
+    "Kunle Adegbola",
+    "Henry Lalsangzuala",
+    "Abdul Rehman (coach)",
+    "Kate Wilmott",
+    "Yadavindra Singh"
+   ],
+   "ids_dropped_shared": [
+    "Narendra Kalyan",
+    "Nisarg Patel"
+   ],
+   "rows": 10192,
+   "articles": 10192,
+   "infobox_found": 10156,
+   "birth_date_filled": 9610,
+   "hand_filled": 9152,
+   "bowling_class_filled": 7770,
+   "bowling_family_filled": 7782,
+   "role_filled": 6394,
+   "span_filled": 3668,
+   "career_filled": 8246,
+   "active_international": {
+    "": 6540,
+    "0": 2789,
+    "1": 863
+   },
+   "retired_international": 748,
+   "retired_test": 792,
+   "retired_odi": 763,
+   "retired_t20i": 758,
+   "cricsheet_id_rows": 9072,
+   "cricsheet_match_rate": 0.8901
+  },
+  "team_images": {
+   "teams": 330,
+   "with_image": 292,
+   "fetched_now": 0,
+   "missing": 38
+  }
+ }
 }

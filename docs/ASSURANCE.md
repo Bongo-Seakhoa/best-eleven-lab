@@ -1,6 +1,6 @@
 # Assurance
 
-What has been checked, how, and what remains open. Status as of 9 October 2026; the career check was revised on 22 October 2026.
+What has been checked, how, and what remains open. Status as of 9 October 2026; the career check and reference snapshots were refreshed on 23 October 2026.
 
 ## Checks that run on every build
 
@@ -11,8 +11,8 @@ The weekly build of 19 October 2026 failed the career check: it then compared wh
 | Check | Method | Result (Oct 2026) |
 |---|---|---|
 | Ingest accounting | Rebuild each innings total from deliveries; compare with every official winning margin by runs (including innings victories) and by wickets | 9,981 of 9,985 run margins and 10,326 of 10,327 wicket margins exact. The five misses are associate matches whose source totals disagree with their own result. |
-| Identity and completeness | Compare Cricsheet career totals with Wikipedia infoboxes for men's Test players whose careers lie wholly inside coverage, from sides that have never met Afghanistan in a Test, with infoboxes updated within 60 days of the reference snapshot. Cricsheet is counted only up to the date each infobox gives for its figures, so matches played after the snapshot cannot fail the check and the set does not shrink as data arrives. Left out: infoboxes dated inside a match the player was playing, or after the last Cricsheet match. Fails below 50 players or 98% exact | 123 players, 100% exact on matches, runs and wickets (data to 14 Oct 2026) |
-| Broad completeness (context) | Same comparison for every player, counted to each infobox's date where it gives a full one | Exact for 70% of Test, 41% of ODI and 42% of T20I players. Where Cricsheet has fewer matches, the misses concentrate in sides that play Afghanistan (Cricsheet withholds those matches). Cricsheet has more for 1–4% of players; before counting to the infobox date it was 8–17%, mostly matches played after an infobox was last updated. |
+| Identity and completeness | Compare Cricsheet career totals with Wikipedia infoboxes for men's Test players whose careers lie wholly inside coverage, from sides that have never met Afghanistan in a Test, with infoboxes updated during the 60 days up to the reference snapshot. Cricsheet is counted only up to the date each infobox gives for its figures, so matches played after the snapshot cannot fail the check and the set does not shrink as data arrives. Left out: infoboxes dated inside a match the player was playing, or after the last Cricsheet match. Fails below 50 players or 98% exact | 93 players, 100% exact on matches, runs and wickets (data to 14 Oct 2026) |
+| Broad completeness (context) | Same comparison for every player, counted to each infobox's date where it gives a full one | Exact for 68% of Test, 41% of ODI and 42% of T20I players. Where Cricsheet has fewer matches, the misses concentrate in sides that play Afghanistan (Cricsheet withholds those matches). Cricsheet has more for 1–4% of players; before counting to the infobox date it was 8–17%, mostly matches played after an infobox was last updated. |
 | Does the adjustment help? | Rating from 2016–21 vs raw output per ball in 2022–26, batters with 300+ balls in both (Spearman) | Adjusted beats raw value per ball in Tests (0.64 vs 0.60), ODIs (0.45 vs 0.40), T20Is (0.35 vs 0.31) and the IPL (0.40 vs 0.35). In T20Is, plain strike rate (0.44) beats both. |
 | Bowling-type classifier | 5-fold cross-validation on 3,210 bowlers with Wikipedia styles | 89% accuracy, AUC 0.965; at the 0.85 threshold, 88% of bowlers labelled with 94% accuracy |
 | Selector exactness | 120 random instances (caps, locks, exclusions) solved by the browser engine and by SciPy's MILP | Identical optima |
