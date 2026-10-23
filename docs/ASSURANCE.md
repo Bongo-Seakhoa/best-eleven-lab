@@ -21,6 +21,8 @@ The weekly build of 19 October 2026 failed the career check: it then compared wh
 
 ## One-off verification (October 2026)
 
+**Swap freeze regression (23 October).** Australia's active 2023–26 T20I side froze when Matt Renshaw replaced Cameron Green. The captured candidate scores now form a bounded regression against SciPy's MILP. Lock incentives scale with the possible utility gap, floating-point residuals have a stable tolerance, and cyclic paths report an error. Leaving XI vs XI also removes its open swap dialog.
+
 **Captaincy snapshot.** Checked by an independent reviewer against the live pages: 28 table layouts, and 319 captain aggregates matching the pages' own total rows. Examples confirmed include Ponting 77 Tests, Dhoni 200 ODIs and 72 T20Is, Bavuma 12 Tests (11 won), Meg Lanning 78 ODIs, Williamson 40 Tests, and IPL captains. The seven remaining mismatches are inconsistencies inside the source pages; they are kept as published and flagged. 23 sampled identity links were confirmed as the same person.
 
 **Retirement detection.** Spot-checked as correct for Kohli and Rohit Sharma (Tests and T20Is), Steve Smith (ODIs), Stokes (international, June 2026), Broad and Steyn. Come-backs are honoured: Shabnim Ismail reversed her retirement in May 2026, and Dane van Niekerk's 2025 T20I appearance overrides her 2023 retirement statement.

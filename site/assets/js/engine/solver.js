@@ -10,7 +10,7 @@
 // Combining an overseas cap with a per-team cap breaks the network structure
 // and is rejected rather than approximated.
 
-const LOCK_BONUS = 1e6;
+const COST_EPSILON = 1e-9;
 
 class Graph {
   constructor(n) { this.n = n; this.adj = Array.from({ length: n }, () => []); this.e = []; }
@@ -26,6 +26,7 @@ class Graph {
       const dist = new Float64Array(n).fill(Infinity);
       const inQ = new Uint8Array(n);
       const prevE = new Int32Array(n).fill(-1);
+      const depth = new Int32Array(n);
       dist[s] = 0;
       const q = [s]; inQ[s] = 1;
       let head = 0;
@@ -33,15 +34,20 @@ class Graph {
         const u = q[head++]; inQ[u] = 0;
         for (const id of this.adj[u]) {
           const ed = this.e[id];
-          if (ed.cap - ed.flow > 0 && dist[u] + ed.cost < dist[ed.to] - 1e-12) {
+          if (ed.cap - ed.flow > 0 && dist[u] + ed.cost < dist[ed.to] - COST_EPSILON) {
             dist[ed.to] = dist[u] + ed.cost; prevE[ed.to] = id;
+            depth[ed.to] = depth[u] + 1;
+            if (depth[ed.to] >= n) return { error: 'Selection encountered an unstable cost cycle. Change the picks and try again.' };
             if (!inQ[ed.to]) { inQ[ed.to] = 1; q.push(ed.to); }
           }
         }
       }
       if (dist[t] === Infinity) break;
       let push = want - flow;
+      const seen = new Set();
       for (let v = t; v !== s; v = this.e[prevE[v] ^ 1].to) {
+        if (prevE[v] < 0 || seen.has(v)) return { error: 'Selection could not construct a stable assignment.' };
+        seen.add(v);
         const ed = this.e[prevE[v]]; push = Math.min(push, ed.cap - ed.flow);
       }
       for (let v = t; v !== s; v = this.e[prevE[v] ^ 1].to) {
@@ -74,6 +80,15 @@ export function solve(slots, cands, opts = {}) {
   for (const id of locks) {
     if (!pool.some((c) => c.id === id)) return { error: 'A locked player is not eligible for any slot in this composition' };
   }
+  // Keep the lock incentive above every possible utility gain without million-point cancellation.
+  let minUtility = Infinity, maxUtility = -Infinity;
+  for (const c of pool) for (const s of types) {
+    const u = c.util[s.type];
+    if (u == null) continue;
+    if (!Number.isFinite(u)) return { error: 'A player has an invalid utility score.' };
+    minUtility = Math.min(minUtility, u); maxUtility = Math.max(maxUtility, u);
+  }
+  const lockBonus = (need + 1) * (maxUtility - minUtility + 1);
   const groupOf = (c) => (maxPerTeam != null ? `t:${c.team}` : maxOverseas != null ? (c.overseas ? 'os' : 'local') : 'all');
   const capOf = (g) => (maxPerTeam != null ? maxPerTeam : g === 'os' ? maxOverseas : need);
   const groups = [...new Set(pool.map(groupOf))];
@@ -83,14 +98,16 @@ export function solve(slots, cands, opts = {}) {
   groups.forEach((x, i) => g.add(S, G0 + i, capOf(x), 0));
   pool.forEach((c, i) => {
     g.add(G0 + gIndex.get(groupOf(c)), P0 + i, 1, 0);
-    const bonus = locks.has(c.id) ? LOCK_BONUS : 0;
+    const bonus = locks.has(c.id) ? lockBonus : 0;
     types.forEach((s, k) => {
       const u = c.util[s.type];
       if (u != null) g.add(P0 + i, T0 + k, 1, -(u + bonus));
     });
   });
   types.forEach((s, k) => g.add(T0 + k, T, s.count, 0));
-  const { flow } = g.minCostFlow(S, T, need);
+  const result = g.minCostFlow(S, T, need);
+  if (result.error) return { error: result.error };
+  const { flow } = result;
   if (flow < need) return { error: 'No eleven satisfies these constraints' };
   const picks = [];
   pool.forEach((c, i) => {

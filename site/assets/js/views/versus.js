@@ -37,6 +37,7 @@ export async function mount(root, route) {
   const st = initial(route);
   const side = { a: {}, b: {} };
   let match = null, matchScope = null, priors = null, dead = false;
+  let swapDialog = null;
   let indexCache = null;
   const resultCache = new Map();   // side settings -> selection, so an unchanged side is not picked again
 
@@ -645,6 +646,7 @@ export async function mount(root, route) {
   }
 
   function openSwap(s, i) {
+    swapDialog?.close();
     const x = side[s].result.xi[i], p = x.player;
     const hist = st[s].mode === 'hist';
     const inn = match?.k.innings ?? 1;
@@ -654,6 +656,7 @@ export async function mount(root, route) {
     let showAll = false, limit = SWAP_PAGE, query = '';
 
     const dlg = h('dialog.vs-dialog', { 'aria-labelledby': 'vs-dlg-title', style: { '--c': colour(s) } });
+    swapDialog = dlg;
     const close = () => dlg.close();
     const card = (who, role, line, extra) => h('div.vs-swap-card',
       h('span.avatar', { 'aria-hidden': 'true' }, initials(who.name)),
@@ -708,7 +711,7 @@ export async function mount(root, route) {
       h('p.tiny.muted.vs-swap-note', (st[s].comp || '') === ''
         ? 'The Best XI shape stays in force, so the rest of the side may be rebalanced around your pick. Set the shape to Free to change only this place.'
         : 'Only this place changes. The figure beside each player is what the swap does to the side’s projected runs.'));
-    dlg.addEventListener('close', () => dlg.remove());
+    dlg.addEventListener('close', () => { dlg.remove(); if (swapDialog === dlg) swapDialog = null; });
     dlg.addEventListener('click', (e) => { if (e.target === dlg) close(); });
     document.body.append(dlg);
     draw();
@@ -878,7 +881,7 @@ export async function mount(root, route) {
   renderAll();
 
   return {
-    destroy() { dead = true; },
+    destroy() { dead = true; swapDialog?.close(); swapDialog?.remove(); swapDialog = null; },
     update(r) {
       if (r.query.get('a') == null) return;
       const next = { a: stateOf(r.query.get('a')), b: stateOf(r.query.get('b')), m: r.query.get('m') || st.m };
