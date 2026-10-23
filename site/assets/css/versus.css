@@ -165,47 +165,6 @@ table.data.vs-tape-table th { white-space: normal; }
 .badge.vs-pick { background: var(--gold-soft); color: var(--ink); border-color: color-mix(in srgb, var(--gold) 45%, transparent); }
 .badge.vs-pred { background: var(--sky-soft); color: var(--ink); border-color: color-mix(in srgb, var(--sky) 40%, transparent); }
 
-/* ------------------------------------------------------- swap dialog */
-.vs-dialog {
-  width: min(720px, calc(100vw - 24px)); max-height: min(88vh, 900px); padding: 0; border: 1px solid var(--line);
-  border-radius: var(--r-l); background: var(--surface); color: var(--ink); box-shadow: var(--shadow-lg); overflow: hidden;
-}
-.vs-dialog[open] { display: flex; flex-direction: column; }
-.vs-dialog::backdrop { background: rgba(6, 12, 9, .55); backdrop-filter: blur(3px); }
-.vs-dlg-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 16px 20px; border-bottom: 1px solid var(--line); }
-.vs-dlg-head h2 { font-size: 22px; margin: 0; }
-.vs-swap-pair { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: stretch; gap: 10px; padding: 16px 20px 6px; }
-.vs-swap-card {
-  display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 10px; align-items: start; padding: 12px; border-radius: var(--r);
-  border: 1px solid var(--line); background: var(--surface-2);
-}
-.vs-swap-card > :last-child:not(.vs-swap-who) { grid-column: 1 / -1; }
-.vs-swap-pair > .vs-swap-card:last-child { border-color: color-mix(in srgb, var(--c) 55%, var(--line)); background: color-mix(in srgb, var(--c) 8%, var(--surface)); }
-.vs-swap-who { display: grid; gap: 2px; min-width: 0; }
-.vs-swap-who strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.vs-swap-arrow { align-self: center; color: color-mix(in srgb, var(--c) 80%, var(--ink)); }
-.vs-swap-rec { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
-.vs-swap-rec .btn { margin-left: auto; }
-.vs-swap-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; padding: 10px 20px 0; }
-.vs-swap-tools .input { flex: 1 1 220px; min-width: 0; }
-.vs-swap-toggle { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); cursor: pointer; }
-.vs-swap-count { margin: 8px 20px 4px; }
-.vs-swap-list { list-style: none; margin: 0; padding: 0 12px 6px; overflow-y: auto; flex: 1 1 auto; min-height: 120px; }
-.vs-swap-row {
-  width: 100%; display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "name delta" "meta delta";
-  gap: 2px 12px; align-items: center; padding: 9px 10px; border: 0; border-radius: var(--r-s); background: none;
-  color: inherit; font: inherit; text-align: left; cursor: pointer;
-}
-.vs-swap-row:hover, .vs-swap-row:focus-visible { background: var(--surface-2); }
-.vs-swap-row-name { grid-area: name; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-weight: 600; min-width: 0; }
-.vs-swap-row-meta { grid-area: meta; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.vs-swap-row .vs-delta { grid-area: delta; }
-.vs-delta { font: 600 13px/1.2 var(--font-ui); font-variant-numeric: tabular-nums; white-space: nowrap; }
-.vs-delta.up { color: var(--strength); }
-.vs-delta.down { color: var(--weakness); }
-.vs-swap-more { margin: 6px 10px; }
-.vs-swap-note { margin: 0; padding: 10px 20px 16px; border-top: 1px solid var(--line-2); }
-
 @media (max-width: 860px) {
   .vs-sides { grid-template-columns: minmax(0, 1fr); }
   .vs-swap { justify-self: center; }
@@ -224,8 +183,6 @@ table.data.vs-tape-table th { white-space: normal; }
   .vs-slot-p.b { grid-area: b; }
   table.data.vs-tape-table th, table.data.vs-tape-table td { padding: 8px 6px; }
   .vs-tape-v { width: 27%; }
-  .vs-swap-pair { grid-template-columns: minmax(0, 1fr); }
-  .vs-swap-arrow { justify-self: center; transform: rotate(90deg); }
 }
 @media (prefers-reduced-motion: reduce) {
   .vs-odds-seg, .vs-won-bar, .vs-slot-bar { transition: none; }

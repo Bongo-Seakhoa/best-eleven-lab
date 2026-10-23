@@ -13,6 +13,7 @@ Pick a cricket Best XI for any national side, franchise league or era, from ever
 - **Captains** compared side by side from formal captaincy records. Every captain with a Cricsheet id or a Wikipedia article links to a page: a full profile, or a career record for those who played before ball-by-ball coverage.
 - **Pages remember where you were.** Each of Best XI, Players, Captains and XI vs XI keeps its last state in your browser, the back and forward buttons return to it, and links to the pages you used last point left or right the way they sit in the menu.
 - **XI vs XI.** Pick two elevens from any formats or leagues, in the Best XI's shape or a free one (all batters against all bowlers, if you like), swap players in and out, and play them as a Test, ODI or T20I: projected runs per innings, where the gap comes from, and win chances calibrated on real matches. The default is the Test World XI against the T20I World XI in an ODI.
+- **Manual picks.** Both selection pages share a searchable swap preview. Choose players outside recommendations, review evidence and preset warnings, then confirm one change while keeping the other ten. Accepted shape/cap changes and all eleven picks survive in the shared link.
 - **Short records handled properly.** A debutant or a thin record is pulled towards what the player's other cricket predicts, through format-to-format transitions measured on players who played both, not towards an average player.
 
 ## How it works

@@ -1,0 +1,94 @@
+/* One player-selection surface for Best XI and XI vs XI. */
+.player-picker {
+  width: min(1040px, calc(100vw - 28px)); max-width: none; height: min(820px, 92dvh); max-height: 92dvh;
+  padding: 0; border: 1px solid var(--line); border-radius: var(--r-l); background: var(--surface);
+  color: var(--ink); box-shadow: var(--shadow-lg); overflow: hidden;
+}
+.player-picker[open] { display: flex; flex-direction: column; }
+.player-picker::backdrop { background: rgba(5, 14, 10, .7); backdrop-filter: blur(5px); }
+.picker-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 20px 24px 14px; }
+.picker-head h2 { margin: 4px 0 0; font-size: 30px; }
+.picker-head .icon-btn { font-size: 26px; }
+.picker-out { display: flex; align-items: center; flex-wrap: wrap; gap: 10px 20px; padding: 0 24px 16px; border-bottom: 1px solid var(--line); }
+.picker-out label { display: flex; align-items: center; gap: 10px; white-space: nowrap; }
+.picker-out .select { min-width: 190px; }
+.picker-body { display: grid; grid-template-columns: minmax(0, .95fr) minmax(0, 1.05fr); flex: 1; min-height: 0; }
+.picker-browser { min-height: 0; display: flex; flex-direction: column; border-right: 1px solid var(--line); }
+.picker-tools { padding: 16px 18px 0; }
+.picker-tools .input-icon .input { width: 100%; }
+.picker-filters { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
+.picker-filters .select { flex: 1; min-width: 0; }
+.picker-toggle { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; }
+.picker-count { margin: 12px 18px 6px; }
+.picker-list { overflow: auto; min-height: 100px; padding: 0 8px 12px; overscroll-behavior: contain; }
+.picker-choice {
+  display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 12px;
+  width: 100%; padding: 13px 10px; border: 1px solid transparent; border-bottom-color: var(--line-2);
+  border-radius: var(--r-s); background: transparent; color: inherit; text-align: left; font: inherit; cursor: pointer;
+  transition: background .15s, border-color .15s;
+}
+.picker-choice:hover { background: var(--surface-2); }
+.picker-choice[aria-pressed="true"] { border-color: var(--pitch); background: color-mix(in srgb, var(--pitch) 10%, var(--surface)); }
+.picker-choice-main, .picker-choice-score { display: grid; gap: 3px; min-width: 0; }
+.picker-choice-main > strong { font-size: 14px; overflow-wrap: anywhere; }
+.picker-choice-score { text-align: right; align-self: start; padding-top: 2px; }
+.picker-choice-score strong { font-size: 18px; }
+.picker-choice .avatar { width: 34px; height: 34px; font-size: 11px; }
+.picker-tags { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 5px; }
+.picker-tag {
+  display: inline-flex; align-items: center; gap: 5px; padding: 4px 7px; border-radius: 7px;
+  background: linear-gradient(115deg, color-mix(in srgb, var(--gold) 20%, var(--surface)), color-mix(in srgb, var(--sky) 13%, var(--surface)));
+  border: 1px solid color-mix(in srgb, var(--gold) 35%, var(--line)); color: var(--ink-2); font-size: 10px; line-height: 1.4;
+}
+.picker-tag.warning { padding: 6px 9px; font-size: 11px; }
+.picker-more { display: block; margin: 10px auto 0; }
+.picker-preview { overflow: auto; padding: 20px; background: var(--surface-2); overscroll-behavior: contain; }
+.picker-empty { padding: 32px 18px; text-align: center; color: var(--muted); }
+.picker-empty > .icon { color: var(--pitch); margin-bottom: 12px; }
+.picker-empty h3 { color: var(--ink); }
+.picker-pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.picker-player { display: grid; align-content: start; gap: 5px; min-width: 0; padding: 12px; border: 1px solid var(--line); border-radius: var(--r); background: var(--surface); }
+.picker-player:last-child { border-color: color-mix(in srgb, var(--pitch) 55%, var(--line)); }
+.picker-player-name { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.picker-player-name strong { overflow-wrap: anywhere; font-size: 14px; }
+.picker-player .avatar { width: 30px; height: 30px; flex: none; font-size: 10px; }
+.picker-player p { margin: 0; }
+.picker-player > .small { display: flex; align-items: center; gap: 4px; }
+.picker-role { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 12px; margin: 16px 0; }
+.picker-metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; }
+.picker-metric { display: grid; gap: 4px; padding: 12px; border-radius: var(--r-s); background: var(--surface); border: 1px solid var(--line); }
+.picker-metric strong { font-size: 25px; }
+.picker-metric .up { color: var(--strength); }
+.picker-metric .down { color: var(--weakness); }
+.picker-impact { margin-bottom: 14px; }
+.picker-impact h3 { font-size: 16px; margin: 0 0 8px; }
+.picker-composition { margin-top: 14px; padding-top: 8px; border-top: 1px solid var(--line); }
+.picker-footer { flex: none; display: grid; gap: 12px; padding: 14px 24px 18px; border-top: 1px solid var(--line); background: var(--surface); }
+.picker-actions { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 8px; }
+.picker-actions > :first-child { margin-right: auto; }
+.picker-error { color: var(--weakness); margin: 0 0 6px; }
+.xi-actions { display: flex; gap: 5px; flex-wrap: wrap; justify-content: flex-end; }
+.xi-actions .btn { white-space: nowrap; }
+.picker-launch { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 0 0 12px; }
+@media (max-width: 1100px) { .xi-actions { grid-column: 3 / -1; justify-self: start; } }
+@media (max-width: 720px) {
+  .player-picker { width: calc(100vw - 12px); height: 96dvh; max-height: 96dvh; border-radius: 12px; }
+  .picker-head { padding: 14px 14px 10px; }
+  .picker-head h2 { font-size: 25px; }
+  .picker-out { padding: 0 14px 12px; gap: 6px; }
+  .picker-out label { width: 100%; }
+  .picker-out .select { min-width: 0; flex: 1; }
+  .picker-body { display: block; overflow: auto; overscroll-behavior: contain; }
+  .picker-browser { border-right: 0; border-bottom: 1px solid var(--line); }
+  .picker-list { max-height: 30dvh; }
+  .picker-tools { padding: 12px 12px 0; }
+  .picker-preview { overflow: visible; padding: 14px; }
+  .picker-player { padding: 10px; }
+  .picker-player-name { flex-wrap: wrap; }
+  .picker-footer { padding: 10px 12px 12px; gap: 8px; }
+  .picker-actions { gap: 6px; }
+  .picker-actions .btn { padding: 9px 10px; font-size: 12px; }
+  .picker-footer > div > .tiny { font-size: 10px; }
+  .xi-actions { flex-direction: column; }
+}
+@media (prefers-reduced-motion: reduce) { .picker-choice { transition: none; } }

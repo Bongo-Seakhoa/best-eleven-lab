@@ -2,7 +2,7 @@
 // settings it implies and its title. Shared by the Best XI and XI vs XI pages.
 import * as data from './data.js';
 import { PRESETS, defaultSlots, SLOT_TYPES, selectXI } from './engine/select.js';
-import { selectHistoric } from './engine/historic.js';
+import { selectHistoric, HISTORIC_TEMPLATE } from './engine/historic.js';
 
 export function defaults(partial = {}) {
   return {
@@ -30,6 +30,18 @@ export function toQuery(st) {
 
 export const queryString = (st) => new URLSearchParams(toQuery(st)).toString();
 
+/** Keep existing compact links, while preserving commas in career identities. */
+export function idList(value) {
+  if (!value) return [];
+  if (!value.startsWith('[')) return value.split(',');
+  try { const parsed = JSON.parse(value); return Array.isArray(parsed) && parsed.every((x) => typeof x === 'string') ? parsed : []; }
+  catch { return []; }
+}
+export function idString(values) {
+  const list = [...values];
+  return list.some((id) => id.includes(',')) ? JSON.stringify(list) : list.join(',');
+}
+
 export const scopeKey = (st) => (st.tier === 'league' ? st.lg : `${st.g === 'male' ? 'men' : 'women'}-${st.f.toLowerCase()}`);
 export const histKey = (st) => `${st.g === 'male' ? 'men' : 'women'}-${st.f.toLowerCase()}`;
 
@@ -45,14 +57,18 @@ const FREE_SLOT = { free: 'any', bat: 'bat', bowl: 'bowl' };
 /** Slots a state asks for: a free shape, or the Best XI shape (default or set by hand). */
 export function slotsFor(st, family) {
   if (FREE_SLOT[st.comp]) return [{ type: FREE_SLOT[st.comp], count: 11 }];
+  if (st.mode === 'hist') {
+    const parsed = parseSlots(st.slots, family, HISTORIC_TEMPLATE);
+    return parsed.every((s) => HISTORIC_TEMPLATE.some((h) => h.type === s.type) || s.type === 'bowler') ? parsed : HISTORIC_TEMPLATE;
+  }
   return parseSlots(st.slots, family);
 }
 
-export function parseSlots(str, family) {
-  if (!str) return defaultSlots(family);
+export function parseSlots(str, family, fallback = null) {
+  if (!str) return fallback ?? defaultSlots(family);
   const slots = str.split(',').map((x) => { const m = x.match(/^([a-z]+)(\d+)$/); return m && { type: m[1], count: +m[2] }; })
     .filter((x) => x && SLOT_TYPES[x.type]);
-  return slots.length ? slots : defaultSlots(family);
+  return slots.length ? slots : fallback ?? defaultSlots(family);
 }
 export const slotsStr = (slots) => slots.filter((s) => s.count > 0).map((s) => `${s.type}${s.count}`).join(',');
 
@@ -102,7 +118,7 @@ export function engineSettings(st, scope) {
     weights: { quality: st.quality, legacy: st.legacy, experience: st.experience, leadership: st.leadership },
     slots, maxPerTeam: scope?.tier === 'national' && team === null ? (st.mpt || null) : null,
     maxOverseas: scope?.tier === 'league' && team === null ? (st.mos ?? null) : null,
-    locks: new Set(st.lock ? st.lock.split(',') : []), excludes: new Set(st.excl ? st.excl.split(',') : []),
+    locks: new Set(idList(st.lock)), excludes: new Set(idList(st.excl)),
     flexible: !st.slots && !FREE_SLOT[st.comp],   // only the default shape bends; a shape set by hand is kept or reported infeasible
   };
 }
@@ -120,8 +136,8 @@ export function selectFor(st, { scope, hist }) {
       country: st.team || null, fullOnly: !!st.fo,
       weights: { quality: st.quality, legacy: st.legacy, experience: st.experience, leadership: st.leadership },
       maxPerTeam: st.team ? null : (st.mpt || null),
-      slots: FREE_SLOT[st.comp] ? [{ type: FREE_SLOT[st.comp], count: 11 }] : undefined,
-      locks: new Set(st.lock ? st.lock.split(',') : []), excludes: new Set(st.excl ? st.excl.split(',') : []),
+      slots: slotsFor(st, 'multi'),
+      locks: new Set(idList(st.lock)), excludes: new Set(idList(st.excl)),
     });
   }
   return selectXI(scope, engineSettings(st, scope));
