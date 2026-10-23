@@ -87,6 +87,22 @@ def test_js_solver_matches_milp(tmp_path):
 
 
 @pytest.mark.skipif(NODE is None, reason="node is required for the browser engine")
+def test_renshaw_swap_terminates_and_matches_milp(tmp_path):
+    # Captured from Australia T20I, 2023–26 active: Renshaw in for Green.
+    inst = json.loads((ROOT / "tests/fixtures/selection/australia-t20i-renshaw-swap.json").read_text())
+    path = tmp_path / "renshaw.json"
+    path.write_text(json.dumps([inst]))
+    out = subprocess.run([NODE, str(ROOT / "site/tests/solve_cli.mjs"), str(path)],
+                         capture_output=True, text=True, check=True, cwd=ROOT, timeout=30)
+    result = json.loads(out.stdout)[0]
+    assert "error" not in result, result
+    assert result["total"] == pytest.approx(milp_optimum(inst), abs=1e-6)
+    assert len(set(result["ids"])) == 11
+    assert "218d4d78" in result["ids"]
+    assert "eaa76d3c" not in result["ids"]
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for the browser engine")
 def test_combined_caps_are_rejected(tmp_path):
     inst = random_instance(np.random.default_rng(1), 0)
     inst["maxOverseas"], inst["maxPerTeam"] = 4, 3
