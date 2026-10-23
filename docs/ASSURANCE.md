@@ -33,6 +33,8 @@ The weekly build of 19 October 2026 failed the career check: it then compared wh
 
 ## Known gaps
 
+- The 23 October reference refresh preserves two Wikipedia infobox defects: [Neil Brand's T20 figures](https://en.wikipedia.org/w/index.php?title=Neil_Brand&oldid=1380592991) give 8 matches but 589 runs at 20.31, implying about 29 dismissals; [Marcus Bean's table](https://en.wikipedia.org/w/index.php?title=Marcus_Bean_(cricketer)&oldid=1380850466) labels two columns List A. These affect biography career tables; the selector's ratings come from Cricsheet.
+- Existing identity conflicts remain unresolved: Margaret Ngoche's career-list and biography rows carry different Cricsheet IDs, and ID `efcb778e` appears for both sides in T20I match `1229824`. The reference refresh does not infer replacements for these source identities.
 - Cricsheet withholds every match involving Afghanistan's men (379 matches at the October archive). Afghanistan's men have no ball-by-ball ratings, and their opponents' records are short by those games.
 - Men's ball-by-ball coverage starts around 2002. Earlier careers enter only through the all-eras mode, which has no batting positions, strike rates or opposition adjustment.
 - Field plans have no spatial data behind the named positions.
