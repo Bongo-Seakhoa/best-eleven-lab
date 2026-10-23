@@ -3,13 +3,14 @@ import { h, clear, fmt, initials, tooltip, debounce, drawer } from '../ui/dom.js
 import * as data from '../data.js';
 import { setQuery, isLive } from '../app.js';
 import { rememberTitle, saved as savedPage } from '../memory.js';
-import { whyNot, stability, PRESETS, SLOT_TYPES } from '../engine/select.js';
+import { stability, PRESETS, SLOT_TYPES } from '../engine/select.js';
 import { defaults, fromQuery, toQuery, parseSlots, slotsStr, selectableTeams, resolve, engineSettings,
-  selectFor, xiTitle, windowText, queryString, compositionText, COMPOSITIONS } from '../xistate.js';
+  selectFor, xiTitle, windowText, queryString, compositionText, COMPOSITIONS, idList, idString } from '../xistate.js';
 import { FAMILY_RULES } from '../engine/metrics.js';
 import { icon, ROLE_ICON } from '../ui/icons.js';
 import { teamLabel } from '../ui/teams.js';
 import { playerHref } from '../ui/links.js';
+import { playerPicker } from '../ui/player-picker.js';
 
 const COMPONENTS = [
   { key: 'quality', label: 'Quality', hint: 'Opposition- and era-adjusted output per ball (per innings for Test batting), shrunk for small samples', colour: 'var(--pitch)' },
@@ -28,6 +29,7 @@ export async function mount(root, route) {
   root.append(page);
   let st = defaults(fromQuery(route.query));
   let dead = false;
+  let picker = null;
   let scope = null, hist = null, result = null, stab = null, stabToken = 0;
 
   const hero = h('header.select-hero');
@@ -56,14 +58,17 @@ export async function mount(root, route) {
 
   const commit = debounce(async (recomputeOnly = false) => {
     if (dead) return;
-    setQuery(toQuery(st), route);
-    if (!recomputeOnly) await ensureData();
-    if (dead) return;
-    compute();
-    renderAll();
+    try {
+      if (!recomputeOnly) await ensureData();
+      if (dead) return;
+      compute();
+      renderAll();
+      setQuery(toQuery(st), route);
+    } catch (e) { toast(`Could not update this XI. ${e.message}`); }
   }, 60);
 
   function set(patch, opts = {}) {
+    picker?.close();
     Object.assign(st, patch);
     if (opts.lensCustom) st.lens = 'custom';
     commit(opts.recomputeOnly);
@@ -183,7 +188,9 @@ export async function mount(root, route) {
     if (st.comp) {
       rail.append(section('Composition', shapeSeg, h('p.tiny.faint', COMPOSITIONS[st.comp]?.note ?? '')));
     } else if (isHist) {
-      rail.append(section('Composition', shapeSeg));
+      rail.append(section('Composition', shapeSeg,
+        st.slots ? h('p.tiny.muted', compositionText(result.slots || [])) : null,
+        st.slots ? h('button.btn.sm.ghost', { type: 'button', onclick: () => set({ slots: '', comp: '' }, { recomputeOnly: true }) }, 'Reset composition') : null));
     }
     if (!isHist && !st.comp) {
       const slots = parseSlots(st.slots, scope.family);
@@ -212,13 +219,13 @@ export async function mount(root, route) {
         'Full-Member cricket only'));
       cons.push(h('div.field', h('label', { for: 'mpt' }, 'Most players from one country'),
         h('select.select', { id: 'mpt', onchange: (e) => set({ mpt: +e.target.value }, { recomputeOnly: true }) },
-          [0, 2, 3, 4, 5, 6].map((n) => h('option', { value: n, selected: (st.mpt || 0) === n }, n === 0 ? 'No limit' : n)))));
+          [0, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11].map((n) => h('option', { value: n, selected: (st.mpt || 0) === n }, n === 0 ? 'No limit' : n)))));
     }
     if (!isHist && st.tier === 'league' && !st.team) {
       cons.push(h('div.field', h('label', { for: 'mos' }, 'Most overseas players'),
         h('select.select', { id: 'mos', onchange: (e) => set({ mos: e.target.value === '' ? null : +e.target.value }, { recomputeOnly: true }) },
           h('option', { value: '' }, 'No limit'),
-          [2, 3, 4, 5, 6].map((n) => h('option', { value: n, selected: st.mos === n }, n)))),
+          [2, 3, 4, 5, 6, 7, 8, 9, 10, 11].map((n) => h('option', { value: n, selected: st.mos === n }, n)))),
         h('p.tiny.faint', scope.maxOverseas ? `League rule: ${scope.maxOverseas} in the XI. ${scope.overseasNote || ''} ` : '',
           scope.overseasSource ? h('a', { href: scope.overseasSource, rel: 'noopener' }, 'Source') : null,
           scope.maxOverseas ? '. ' : '',
@@ -228,11 +235,12 @@ export async function mount(root, route) {
       cons.push(slider('ev', 'Evidence bar', 'Multiplies the minimum balls needed for each role', 0.5, 2, 0.25, '×'));
     }
     if (cons.length) rail.append(section('Constraints', ...cons));
-    const locks = st.lock ? st.lock.split(',') : [], excl = st.excl ? st.excl.split(',') : [];
+    const locks = idList(st.lock), excl = idList(st.excl);
     if (locks.length || excl.length) {
       rail.append(section('Locked and excluded',
         h('p.tiny.muted', `${locks.length} locked, ${excl.length} excluded`),
-        h('button.btn.sm', { type: 'button', onclick: () => set({ lock: '', excl: '' }, { recomputeOnly: true }) }, 'Clear all')));
+        h('p.tiny.muted', 'Clear manual picks to re-pick this shape using your current settings.'),
+        h('button.btn.sm', { type: 'button', onclick: () => set({ lock: '', excl: '' }, { recomputeOnly: true }) }, 'Clear manual picks')));
     }
     rail.append(h('div.rail-foot', h('button.btn.sm.ghost', { type: 'button', onclick: () => { st = defaults({ mode: st.mode, tier: st.tier, g: st.g, f: st.f, lg: st.lg }); commit(); } }, 'Reset everything'),
       h('button.btn.sm', { type: 'button', onclick: copyLink }, icon('link', { size: 15 }), 'Copy link to this XI')));
@@ -279,6 +287,8 @@ export async function mount(root, route) {
       h('div', h('div.rule-title.left', 'The eleven'), h('div.small.muted', { style: { marginTop: '8px' } }, summary)),
       st.mode === 'bbb' ? h('div.legend', COMPONENTS.map((c) => h('span.legend-item', h('span.swatch', { style: { background: c.colour } }), c.label))) : null));
 
+    board.append(h('div.picker-launch', h('button.btn.sm', { type: 'button', onclick: () => openSwap(result.xi[0]) }, icon('shuffle', { size: 16 }), 'Choose a player'),
+      h('span.tiny.muted', 'Search beyond recommendations. Preview one swap at a time.')));
     const list = h('ol.xi', { 'aria-label': 'Selected eleven in batting order' });
     result.xi.forEach((x, i) => list.append(playerRow(x, i)));
     board.append(list);
@@ -322,7 +332,7 @@ export async function mount(root, route) {
     const p = x.player;
     const tname = teamName(p);
     const isC = p.id === result.captain, isK = p.id === result.keeper;
-    const locked = (st.lock || '').split(',').includes(p.id);
+    const locked = idList(st.lock).includes(p.id);
     const parts = x.parts || null;
     const bar = h('div.contrib', { 'aria-hidden': 'true' });
     if (st.mode === 'bbb' && parts) {
@@ -346,13 +356,33 @@ export async function mount(root, route) {
           locked ? h('span.badge', icon('lock', { size: 12 }), 'Locked') : null),
         h('div.xi-meta', h('span.role-ico', { style: { color: SLOT_COLOUR[x.type] } }, icon(ROLE_ICON[x.type] || 'ball', { size: 16 })),
           h('span', SLOT_TYPES[x.type]?.label ?? x.type), h('span.faint', '·'), teamLabel(tname, { size: 16 }),
+          p.outsideWindow ? h('span.picker-tag', `Earlier record ${p.recordFrom}–${p.recordTo}`) : null,
+          p.available === false ? h('span.picker-tag', st.av === 'squad' ? 'Outside squad' : 'Not active') : null,
           st.mode === 'hist' ? h('span.faint', `· ${p.stats.span}`) : null),
         h('div.xi-stats.small', statLine(x))),
       h('div.xi-score',
-        h('div.xi-u', { title: 'Utility on a 0–100 scale' }, fmt.score(x.u)),
+         h('div.xi-u', { title: 'Weighted utility under the current priorities' }, fmt.score(x.u)),
         bar,
         kept != null ? tooltip(h('div.tiny.faint', `kept ${Math.round(kept * 100)}%`), 'Share of 20 reselections, with every weight randomly varied by up to ±25%, that kept this player') : null),
-      h('button.btn.sm.ghost.xi-more', { type: 'button', 'aria-label': `Details for ${p.name}`, onclick: () => details(x) }, 'Details'));
+       h('div.xi-actions',
+         h('button.btn.sm', { type: 'button', 'aria-label': `Swap ${p.name}`, onclick: () => openSwap(x) }, icon('shuffle', { size: 14 }), 'Swap'),
+         h('button.btn.sm.ghost.xi-more', { type: 'button', 'aria-label': `Details for ${p.name}`, onclick: () => details(x) }, 'Details')));
+  }
+
+  function openSwap(x, incomingId = null) {
+    picker?.close();
+    picker = playerPicker({ state: st, evidence: { scope, hist }, result, outgoingId: x.player.id, incomingId,
+      getState: () => st, title: xiTitle(st, { scope, hist }),
+      editPresets: () => { rail.scrollIntoView({ block: 'start', behavior: 'smooth' }); rail.querySelector('#comp')?.focus(); },
+      apply: (p) => {
+        if (dead) throw new Error('This selection page has closed.');
+        const previous = st, oldResult = result;
+        try {
+          st = p.state; result = p.result; stab = null; stabToken++;
+          renderAll(); setQuery(toQuery(st), route);
+          return () => [...board.querySelectorAll('button')].find((b) => b.getAttribute('aria-label') === `Swap ${p.incoming.name}`)?.focus();
+        } catch (e) { st = previous; result = oldResult; renderAll(); throw e; }
+      } });
   }
 
   function benchCard() {
@@ -370,47 +400,28 @@ export async function mount(root, route) {
           h('span.bench-team.faint.small', teamLabel(scope.teams[a.player.team] ?? '', { size: 14 })),
           h('span.bench-u.num.small', fmt.score(a.u)),
           h('span.bench-gap.num.tiny', fmt.signed(a.u - weakest)),
-          h('button.btn.sm.ghost', { type: 'button', onclick: () => lock(a.player.id), 'aria-label': `Lock ${a.player.name} into the XI` }, icon('lock', { size: 14 }), h('span.btn-label', 'Lock'))))));
+          h('button.btn.sm.ghost', { type: 'button', onclick: () => lock(a.player.id), 'aria-label': `Preview ${a.player.name} in the XI` }, icon('lock', { size: 14 }), h('span.btn-label', 'Preview'))))));
     }
     return card;
   }
 
   function whyNotCard() {
-    const out = h('div.whynot-out');
-    const input = h('input.input', { type: 'search', placeholder: 'Why not…? Search any candidate', 'aria-label': 'Why not this player', list: 'wn-list' });
-    const searchWrap = h('div.input-icon', icon('search', { size: 16 }), input);
-    const dl = h('datalist', { id: 'wn-list' }, result.pool.filter((c) => !result.xi.some((x) => x.player.id === c.id))
-      .sort((a, b) => Math.max(...Object.values(b.util), 0) - Math.max(...Object.values(a.util), 0)).slice(0, 400)
-      .map((c) => h('option', { value: c.name })));
-    const run = () => {
-      clear(out);
-      const c = result.pool.find((p) => p.name.toLowerCase() === input.value.trim().toLowerCase());
-      if (!c) return;
-      if (result.xi.some((x) => x.player.id === c.id)) { out.append(h('p.small', `${c.name} is already in the eleven.`)); return; }
-      const types = Object.keys(c.util);
-      if (!types.length) { out.append(h('p.small', `${c.name} is not eligible for any slot in this composition.`)); return; }
-      const w = whyNot(scope, settings(), c.id, result);
-      if (w.error) { out.append(h('p.small', w.error)); return; }
-      out.append(h('p.small', h('strong', c.name), ` would cost the eleven ${Math.abs(w.delta).toFixed(1)} utility points.`,
-        w.dropped.length ? ` They would replace ${w.dropped.map((d) => d.player.name).join(', ')}.` : ''),
-        h('button.btn.sm', { type: 'button', onclick: () => lock(c.id) }, `Lock ${c.name} in`));
-    };
-    input.addEventListener('change', run);
-    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') run(); });
-    return h('div.card.card-pad', h('h3.with-ico', icon('search', { size: 18 }), 'Why not someone else?'),
-      h('p.tiny.muted', 'Forces a player in, re-solves the whole eleven, and reports what it costs and who drops out.'),
-      searchWrap, dl, out);
+    return h('div.card.card-pad', h('h3.with-ico', icon('search', { size: 18 }), 'Find another player'),
+      h('p.small.muted', 'Search beyond the recommendations, choose who to replace, and compare the revised eleven before confirming.'),
+      h('p.tiny.muted', 'Composition and availability are labelled preferences for manual picks. Players still need a real record in this side and format.'),
+      h('button.btn.sm', { type: 'button', onclick: () => openSwap(result.xi[0]) }, 'Open player picker'));
   }
 
   function lock(id) {
-    const locks = new Set(st.lock ? st.lock.split(',') : []); locks.add(id);
-    const ex = new Set(st.excl ? st.excl.split(',') : []); ex.delete(id);
-    set({ lock: [...locks].join(','), excl: [...ex].join(',') }, { recomputeOnly: true });
+    if (result?.xi?.length === 11) { openSwap(result.xi[0], id); return; }
+    const locks = new Set(idList(st.lock)); locks.add(id);
+    const ex = new Set(idList(st.excl)); ex.delete(id);
+    set({ lock: idString(locks), excl: idString(ex) }, { recomputeOnly: true });
   }
   function exclude(id) {
-    const ex = new Set(st.excl ? st.excl.split(',') : []); ex.add(id);
-    const locks = new Set(st.lock ? st.lock.split(',') : []); locks.delete(id);
-    set({ excl: [...ex].join(','), lock: [...locks].join(',') }, { recomputeOnly: true });
+    const ex = new Set(idList(st.excl)); ex.add(id);
+    const locks = new Set(idList(st.lock)); locks.delete(id);
+    set({ excl: idString(ex), lock: idString(locks) }, { recomputeOnly: true });
   }
 
   function details(x) {
@@ -490,7 +501,7 @@ export async function mount(root, route) {
           h('td.r', fmt.score(c.sc.batQ)), h('td.r', fmt.score(c.sc.bowlQ)), h('td.r', h('strong', Number.isFinite(bestU(c)) ? fmt.score(bestU(c)) : '–')),
           h('td.r', chosen.has(c.id)
             ? h('button.btn.sm.ghost', { type: 'button', onclick: () => exclude(c.id), 'aria-label': `Exclude ${c.name}` }, icon('exclude', { size: 14 }), 'Exclude')
-            : h('button.btn.sm.ghost', { type: 'button', onclick: () => lock(c.id), 'aria-label': `Lock ${c.name} in` }, icon('lock', { size: 14 }), 'Lock')))))));
+            : h('button.btn.sm.ghost', { type: 'button', onclick: () => lock(c.id), 'aria-label': `Choose ${c.name}` }, icon('shuffle', { size: 14 }), 'Choose')))))));
       if (rows.length > candLimit) {
         table.append(h('div.card-pad', h('button.btn.sm', { type: 'button', onclick: () => { candLimit += 60; draw(); } }, `Show more (${rows.length - candLimit} left)`)));
       }
@@ -511,12 +522,13 @@ export async function mount(root, route) {
   renderAll();
   return {
     update(r) {
+      picker?.close();
       const q = fromQuery(r.query);
       if (JSON.stringify(toQuery(st)) === JSON.stringify(toQuery({ ...st, ...q }))) return;
       st = defaults(q);
       commit();
     },
-    destroy() { stabToken++; dead = true; },
+    destroy() { stabToken++; dead = true; picker?.close(); },
   };
 }
 

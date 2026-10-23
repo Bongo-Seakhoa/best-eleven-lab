@@ -58,8 +58,20 @@ export function buildPool(scope, settings) {
   const evidence = settings.evidence * windowFactor(settings.from, settings.to);
   const all = aggregate(scope, { ...aggOpts, team: null });
   const ref = references(all, scope, evidence);
-  const agg = settings.team == null ? all : aggregate(scope, { ...aggOpts, team: settings.team });
+  const windowAgg = settings.team == null ? all : aggregate(scope, { ...aggOpts, team: settings.team });
   const P = scope.players;
+  // Manual choices may use an older observed record, but never replace a record
+  // in the selected window or change the recommendation reference population.
+  const agg = new Map(windowAgg);
+  const older = new Set();
+  if (settings.manualPool || settings.locks?.size) {
+    const history = aggregate(scope, { ...aggOpts, from: scope.years[0], team: settings.team });
+    for (const [pi, rec] of history) {
+      if (agg.has(pi) || !(settings.manualPool || settings.locks.has(P.id[pi]))) continue;
+      agg.set(pi, rec);
+      older.add(pi);
+    }
+  }
   const types = settings.slots.filter((s) => s.count > 0).map((s) => s.type);
   const concrete = new Set(types.flatMap((t) => VIRTUAL_SLOTS[t] ?? [t]));
   const anyVirtual = types.some((t) => VIRTUAL_SLOTS[t]);
@@ -68,7 +80,7 @@ export function buildPool(scope, settings) {
     const info = { fam: P.fam[pi], wikiKeeper: P.wk ? !!P.wk[pi] : false };
     // A player the user insists on is eligible whatever the evidence bar.
     const locked = !!settings.locks?.has(P.id[pi]);
-    const rs = roles(rec, scope, locked ? 0 : evidence, info);
+    const rs = roles(rec, scope, locked || settings.manualPool ? 0 : evidence, info);
     if (!rs.size) continue;
     const sc = scores(rec, scope, ref, pi);
     const util = {}, parts = {}, pick = {};
@@ -89,6 +101,8 @@ export function buildPool(scope, settings) {
       id: P.id[pi], pi, name: P.name[pi], team: primaryTeam(rec), roles: rs, sc,
       stats: stats(rec), util, parts, pick, overseas: P.overseas ? !!P.overseas[pi] : false,
       available: available(scope, pi, settings.availability),
+      outsideWindow: older.has(pi),
+      recordFrom: Math.min(...rec.years), recordTo: Math.max(...rec.years),
     });
   }
   return { pool, ref, agg, evidence };
@@ -180,8 +194,8 @@ export function selectXI(scope, settings) {
   let slots = settings.slots;
   let reshaped = null;
   const excludes = settings.excludes ?? new Set();
-  // A locked player with no record under these settings (another format, other
-  // years) is set aside and reported, rather than making every eleven impossible.
+  // A locked player with no scorable record in this scope through the end year
+  // is set aside and reported, rather than making every eleven impossible.
   let locks = null, dropped = [];
   const settle = (pool) => {
     if (locks) return;

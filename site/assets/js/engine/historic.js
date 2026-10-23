@@ -85,7 +85,9 @@ export function historicPool(H, settings) {
   for (const r of pool) {
     const v = raw(r);
     const roles = new Set();
-    const bat = qualBat(r), bowl = qualBowl(r);
+    const manual = settings.manualPool || settings.locks?.has(r.key);
+    const bat = qualBat(r) || (manual && r.m > 0 && (r.runs > 0 || r.outs > 0));
+    const bowl = qualBowl(r) || (manual && r.wkts > 0);
     const keeper = r.st > 0 && (r.keepMark || /wicket-keeper/.test(r.role) || r.st >= 3) && r.outs >= rule.minOuts * 0.6;
     if (bat) roles.add('batter');
     if (keeper) roles.add('keeper');
@@ -115,7 +117,8 @@ export function historicPool(H, settings) {
     for (const [v, rs] of Object.entries(VIRTUAL_SLOTS)) {
       for (const r of rs) if (util[r] != null && (util[v] == null || util[r] > util[v])) { util[v] = util[r]; pick[v] = r; }
     }
-    out.push({ id: r.key, rec: r, name: r.name, team: r.countries[0], roles, sc, util, pick,
+    out.push({ id: r.key, rec: r, name: r.name, team: r.countries[0], roles, sc, util, pick, available: true,
+               recordFrom: r.first, recordTo: r.last,
                stats: { matches: r.m, runs: r.runs, avg: v.avg, wkts: r.wkts, bowlAvg: v.bowlAvg,
                         eraBat: r.eraBat, eraBowl: r.eraBowl, batIndex: v.batIndex, bowlIndex: v.bowlIndex,
                         hundreds: r.h100, catches: r.ct, stumpings: r.st, span: `${r.first}-${r.last}` } });
@@ -137,5 +140,5 @@ export function selectHistoric(H, settings) {
                            : (b.player.sc.batQ ?? 0) - (a.player.sc.batQ ?? 0)));
   const capt = xi.filter((x) => x.player.rec.capt > 0 || x.player.rec.captMark);
   const captain = capt.length ? capt.reduce((a, b) => (b.player.rec.capt > a.player.rec.capt ? b : a)).player.id : null;
-  return { xi, total: res.total, captain, keeper: xi.find((x) => x.type === 'keeper')?.player.id ?? null, pool, ref };
+  return { xi, total: res.total, captain, keeper: xi.find((x) => x.type === 'keeper')?.player.id ?? null, pool, ref, slots };
 }

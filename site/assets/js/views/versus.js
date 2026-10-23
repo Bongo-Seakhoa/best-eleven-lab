@@ -1,17 +1,17 @@
 // XI vs XI: two elevens, each picked wherever you like, played in one format.
-import { h, clear, fmt, debounce, initials } from '../ui/dom.js';
+import { h, clear, fmt, debounce } from '../ui/dom.js';
 import * as data from '../data.js';
 import { setQuery, isLive } from '../app.js';
 import { rememberTitle, saved as savedPage } from '../memory.js';
-import { PRESETS, SLOT_TYPES, buildPool } from '../engine/select.js';
-import { historicPool } from '../engine/historic.js';
+import { PRESETS, SLOT_TYPES } from '../engine/select.js';
 import { comparable, groupKey, ownRates, crossRates, matchAggregate, matchCareer, matchRecord, sideProfile, project } from '../engine/versus.js';
 import { stats as statsOf } from '../engine/metrics.js';
 import { defaults, fromQuery, queryString, selectableTeams, resolve, selectFor, xiTitle, compositionText,
-  COMPOSITIONS, engineSettings } from '../xistate.js';
+  COMPOSITIONS, idList } from '../xistate.js';
 import { icon, ROLE_ICON, logoMark } from '../ui/icons.js';
 import { teamBadge } from '../ui/teams.js';
 import { playerHref } from '../ui/links.js';
+import { playerPicker } from '../ui/player-picker.js';
 
 const SIDES = ['a', 'b'];
 const LENSES = ['balanced', 'quality', 'form', 'alltime', 'legacy', 'experience'];
@@ -21,13 +21,12 @@ const MATCH = {
   T20I: { label: 'T20I', a: 'a T20I', plural: 'T20Is' },
   league: { label: 'League match', a: 'a match', plural: 'matches' },
 };
-const SWAP_PAGE = 60;
 const reducedMotion = () => window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
 
 const stateOf = (qs) => defaults(fromQuery(new URLSearchParams(qs || '')));
 const shortYears = (st) => (st.from === st.to ? String(st.from)
   : `${st.from}–${String(st.to).slice(String(st.from).slice(0, 2) === String(st.to).slice(0, 2) ? 2 : 0)}`);
-const ids = (str) => new Set(str ? str.split(',') : []);
+const ids = (str) => new Set(idList(str));
 
 export async function mount(root, route) {
   const [meta, model] = await Promise.all([data.meta(), data.versusModel().catch(() => null)]);
@@ -168,14 +167,18 @@ export async function mount(root, route) {
   // ------------------------------------------------------------- commit
   const commit = debounce(async (reload = true) => {
     if (dead) return;
-    setQuery({ a: queryString(st.a), b: queryString(st.b), m: st.m }, route);
-    if (reload) await load();
-    if (dead) return;
-    compute();
-    renderAll();
+    try {
+      if (reload) await load();
+      if (dead) return;
+      compute(); renderAll();
+      setQuery({ a: queryString(st.a), b: queryString(st.b), m: st.m }, route);
+    } catch (e) {
+      results.prepend(h('p.notice.error', { role: 'alert' }, `Could not update this matchup. ${e.message}`));
+    }
   }, 60);
 
   function set(s, patch, reload = true) {
+    swapDialog?.close();
     Object.assign(st[s], patch);
     commit(reload);
   }
@@ -337,18 +340,20 @@ export async function mount(root, route) {
         (t.comp || '') !== (st[other].comp || '') ? h('button.btn.sm.ghost', {
           type: 'button', onclick: () => { st[other].comp = t.comp; commit(false); },
         }, 'Use for both') : null),
-      h('span.tiny.faint', COMPOSITIONS[t.comp || '']?.note ?? '')));
+      h('span.tiny.faint', t.slots && !t.comp ? `Custom: ${compositionText(x.result.slots || [])}` : COMPOSITIONS[t.comp || '']?.note ?? ''),
+      t.slots ? h('button.btn.sm.ghost', { type: 'button', onclick: () => set(s, { slots: '', comp: '' }, false) }, 'Reset composition') : null));
 
     const changes = ids(t.lock).size + ids(t.excl).size;
     if (changes) {
       panel.append(h('div.vs-changes.small',
         icon('shuffle', { size: 14 }),
         h('span', `${ids(t.lock).size} picked by you, ${ids(t.excl).size} left out`),
-        h('button.btn.sm.ghost', { type: 'button', onclick: () => set(s, { lock: '', excl: '' }, false) }, 'Undo changes')));
+        h('button.btn.sm.ghost', { type: 'button', title: 'Re-pick this shape using the current settings', onclick: () => set(s, { lock: '', excl: '' }, false) }, 'Clear manual picks')));
     }
 
     const mine = savedPage('select');
     panel.append(h('div.vs-side-actions',
+      !x.result.error ? h('button.btn.sm', { type: 'button', onclick: () => openSwap(s, 0) }, icon('shuffle', { size: 15 }), 'Choose a player') : null,
       mine ? h('button.btn.sm', {
         type: 'button', title: mine.title ? `Use ${mine.title}` : 'Use the XI from the Best XI page',
         onclick: () => {
@@ -584,6 +589,7 @@ export async function mount(root, route) {
     return h(`div.vs-slot-p.${s}`,
       h('div.vs-slot-name', nameEl, !st[s].team && teamName ? teamBadge(teamName, { size: 14 }) : null,
         picked ? h('span.badge.vs-pick', { title: 'You put this player in' }, 'your pick') : null,
+        p.outsideWindow ? h('span.picker-tag', { title: `Selected on the recorded ${st[s].f} seasons ${p.recordFrom}–${p.recordTo}` }, 'earlier selection record') : null,
         prof?.from === 'career' ? h('span.badge.vs-pred', { title: `No ${M().plural} in these years: rated on his whole ${M().label} record` }, `earlier ${M().plural}`) : null,
         prof?.from === 'prior' ? h('span.badge.vs-pred', { title: `Never played ${M().plural}: rated on what his other cricket predicts` }, 'predicted') : null),
       h('div.vs-slot-role', h('span.role-ico', icon(ROLE_ICON[x.type] || 'ball', { size: 14 })), SLOT_TYPES[x.type]?.label ?? x.type,
@@ -593,135 +599,31 @@ export async function mount(root, route) {
   }
 
   // ---------------------------------------------------------------- swap
-  /** Everyone who could take this place, with what the swap does to the side. */
-  function swapCandidates(s, i) {
-    const x = side[s], t = st[s];
-    const inXI = new Set(x.result.xi.map((y) => y.player.id));
-    const out = [];
-    if (t.mode === 'hist') {
-      const { pool } = historicPool(x.hist, { country: t.team || null, fullOnly: !!t.fo,
-        weights: { quality: t.quality, legacy: t.legacy, experience: t.experience, leadership: t.leadership } });
-      const now = histValue(x.result.xi[i]);
-      for (const c of pool) {
-        if (inXI.has(c.id)) continue;
-        const role = c.pick?.any ?? [...c.roles][0];
-        const v = histValue({ type: role, player: c });
-        out.push({ player: c, role, delta: v - now, available: true, from: 'record',
-                   line: [Number.isFinite(c.stats.avg) ? `bat ${fmt.avg(c.stats.avg)}` : null,
-                          Number.isFinite(c.stats.bowlAvg) && c.stats.wkts >= 20 ? `bowl ${fmt.avg(c.stats.bowlAvg)}` : null].filter(Boolean).join(' · ') });
-      }
-    } else {
-      const settings = { ...engineSettings(t, x.scope), evidence: 0, slots: [{ type: 'any', count: 11 }], locks: new Set() };
-      const { pool } = buildPool(x.scope, settings);
-      if (!match) {   // no projection for this format: rank by the selector's own utility
-        const now = x.result.xi[i].u ?? 0;
-        for (const c of pool) {
-          if (inXI.has(c.id)) continue;
-          out.push({ player: c, role: c.pick?.any ?? [...c.roles][0], delta: (c.util.any ?? 0) - now, available: c.available, from: 'record', line: '' });
-        }
-        return out.sort((p, q) => q.delta - p.delta);
-      }
-      const k = match.k, inn = k.innings;
-      const now = (x.prof.bat + x.prof.bowl) * inn;
-      for (const c of pool) {
-        if (inXI.has(c.id)) continue;
-        const role = c.pick?.any ?? [...c.roles][0] ?? 'batter';
-        const xi = x.result.xi.slice();
-        xi[i] = { type: role, player: c };
-        const one = ratesFor(s, [xi[i]], k)[0];
-        const rates = x.rates.slice(); rates[i] = one;
-        const prof = sideProfile(xi, x.scope, k, rates);
-        const me = prof.players[i];
-        out.push({ player: c, role, delta: (prof.bat + prof.bowl) * inn - now, available: c.available, from: one.from,
-                   line: [`bat ${fmt.signed(me.bat * inn, 1)}`, me.bowlShare >= 0.005 ? `bowl ${fmt.signed(me.bowl * inn, 1)}` : null].filter(Boolean).join(' · ') });
-      }
-    }
-    return out.sort((p, q) => q.delta - p.delta);
-  }
-
-  function applySwap(s, outId, inId) {
-    const lock = ids(st[s].lock), excl = ids(st[s].excl);
-    lock.delete(outId); excl.add(outId); excl.delete(inId); lock.add(inId);
-    set(s, { lock: [...lock].join(','), excl: [...excl].join(',') }, false);
-  }
-
   function openSwap(s, i) {
     swapDialog?.close();
-    const x = side[s].result.xi[i], p = x.player;
-    const hist = st[s].mode === 'hist';
-    const inn = match?.k.innings ?? 1;
-    const prof = side[s].prof?.players?.[i];
-    const all = swapCandidates(s, i);
-    const recommended = all.find((c) => c.available) ?? all[0] ?? null;
-    let showAll = false, limit = SWAP_PAGE, query = '';
-
-    const dlg = h('dialog.vs-dialog', { 'aria-labelledby': 'vs-dlg-title', style: { '--c': colour(s) } });
-    swapDialog = dlg;
-    const close = () => dlg.close();
-    const card = (who, role, line, extra) => h('div.vs-swap-card',
-      h('span.avatar', { 'aria-hidden': 'true' }, initials(who.name)),
-      h('div.vs-swap-who', h('strong', who.name),
-        h('span.tiny.muted', [SLOT_TYPES[role]?.label ?? role, teamOf(s, who)].filter(Boolean).join(' · ')),
-        line ? h('span.tiny', line) : null),
-      extra);
-    const nowLine = hist ? [Number.isFinite(p.stats.avg) ? `bat ${fmt.avg(p.stats.avg)}` : null].filter(Boolean).join('')
-      : prof ? [`bat ${fmt.signed(prof.bat * inn, 1)}`, prof.bowlShare >= 0.005 ? `bowl ${fmt.signed(prof.bowl * inn, 1)}` : null].filter(Boolean).join(' · ') : '';
-    const deltaText = (d) => (hist ? `${fmt.signed(d * 100, 0)} on era` : `${fmt.signed(d, 1)} runs ${M().a}`);
-    const swapBtn = (c) => h('button.btn.sm.primary', { type: 'button', onclick: () => { close(); applySwap(s, p.id, c.player.id); } }, 'Swap in');
-
-    const list = h('ul.vs-swap-list', { 'aria-label': 'Players who could take this place' });
-    const count = h('p.tiny.muted.vs-swap-count');
-    const search = h('input.input', { type: 'search', placeholder: 'Search players or teams', 'aria-label': 'Search players or teams',
-      oninput: (e) => { query = e.target.value.trim().toLowerCase(); limit = SWAP_PAGE; draw(); } });
-    const everyone = h('label.vs-swap-toggle.small', h('input', { type: 'checkbox', onchange: (e) => { showAll = e.target.checked; limit = SWAP_PAGE; draw(); } }),
-      ' Include players not available to this side');
-
-    function draw() {
-      clear(list);
-      const shown = all.filter((c) => (showAll || c.available)
-        && (!query || c.player.name.toLowerCase().includes(query) || (teamOf(s, c.player) || '').toLowerCase().includes(query)));
-      for (const c of shown.slice(0, limit)) {
-        list.append(h('li', h('button.vs-swap-row', { type: 'button', onclick: () => { close(); applySwap(s, p.id, c.player.id); } },
-          h('span.vs-swap-row-name', c.player.name,
-            !c.available ? h('span.badge', { title: 'Not available under this side’s settings' }, 'unavailable') : null,
-            c.from === 'prior' ? h('span.badge.vs-pred', 'predicted') : c.from === 'career' ? h('span.badge.vs-pred', `earlier ${M().plural}`) : null),
-          h('span.tiny.muted.vs-swap-row-meta', [SLOT_TYPES[c.role]?.label ?? c.role, teamOf(s, c.player), c.line].filter(Boolean).join(' · ')),
-          h(`span.vs-delta${c.delta >= 0 ? '.up' : '.down'}`, deltaText(c.delta)))));
-      }
-      if (shown.length > limit) {
-        list.append(h('li', h('button.btn.sm.ghost.vs-swap-more', { type: 'button', onclick: () => { limit += SWAP_PAGE; draw(); } },
-          `Show ${Math.min(SWAP_PAGE, shown.length - limit)} more of ${fmt.n(shown.length - limit)}`)));
-      }
-      count.textContent = shown.length ? `${fmt.n(shown.length)} players, best change first` : 'No players match.';
-    }
-
-    dlg.append(
-      h('header.vs-dlg-head',
-        h('h2.display', { id: 'vs-dlg-title' }, `Swap ${p.name}`),
-        h('button.icon-btn', { type: 'button', 'aria-label': 'Close', onclick: close }, h('span', { 'aria-hidden': 'true' }, '×'))),
-      h('div.vs-swap-pair',
-        card(p, x.type, nowLine, h('span.tiny.faint', 'In the side now')),
-        h('div.vs-swap-arrow', { 'aria-hidden': 'true' }, icon('arrow', { size: 22 })),
-        recommended
-          ? card(recommended.player, recommended.role, recommended.line,
-            h('div.vs-swap-rec', h('span.tiny.faint', 'Recommended'), h(`span.vs-delta${recommended.delta >= 0 ? '.up' : '.down'}`, deltaText(recommended.delta)), swapBtn(recommended)))
-          : h('div.vs-swap-card.muted', 'No one else qualifies under these settings.')),
-      h('div.vs-swap-tools', search, everyone),
-      count, list,
-      h('p.tiny.muted.vs-swap-note', (st[s].comp || '') === ''
-        ? 'The Best XI shape stays in force, so the rest of the side may be rebalanced around your pick. Set the shape to Free to change only this place.'
-        : 'Only this place changes. The figure beside each player is what the swap does to the side’s projected runs.'));
-    dlg.addEventListener('close', () => { dlg.remove(); if (swapDialog === dlg) swapDialog = null; });
-    dlg.addEventListener('click', (e) => { if (e.target === dlg) close(); });
-    document.body.append(dlg);
-    draw();
-    dlg.showModal();
-    search.focus();
-  }
-
-  function teamOf(s, player) {
-    if (st[s].mode === 'hist') return player.team || '';
-    return side[s].scope.teams[player.team] ?? '';
+    const x = side[s];
+    swapDialog = playerPicker({ state: st[s], evidence: x, result: x.result,
+      outgoingId: x.result.xi[i].player.id, getState: () => st[s], title: name(s),
+      editPresets: () => { location.hash = `#/?${queryString(st[s])}`; },
+      projection: (proposed) => {
+        if (!match || isHist()) return [];
+        const k = match.k;
+        const prof = sideProfile(proposed.xi, x.scope, k, ratesFor(s, proposed.xi, k));
+        return [{ label: 'Projected contribution', value: ((prof.bat + prof.bowl) - (x.prof.bat + x.prof.bowl)) * k.innings,
+          note: 'runs across the match' }];
+      },
+      apply: (p) => {
+        if (dead) throw new Error('This matchup has closed.');
+        const previous = st[s];
+        try {
+          st[s] = p.state;
+          const key = (x.scope?.key ?? x.hist?.key) + '|' + queryString(st[s]);
+          resultCache.set(key, p.result);
+          compute(); renderAll();
+          setQuery({ a: queryString(st.a), b: queryString(st.b), m: st.m }, route);
+          return () => [...results.querySelectorAll('button')].find((b) => b.getAttribute('aria-label') === `Swap ${p.incoming.name} out of ${name(s)}`)?.focus();
+        } catch (e) { st[s] = previous; compute(); renderAll(); throw e; }
+      } });
   }
 
   // ----------------------------------------------------- tale of the tape
@@ -860,7 +762,7 @@ export async function mount(root, route) {
         isHist()
           ? [h('li', 'Each eleven is picked by the same exact solver as the Best XI page, in the shape you choose.'),
             h('li', 'Career records cannot say who would win: there is no ball-by-ball evidence before the 2000s, so this page compares records rather than projecting a match.')]
-          : [h('li', 'Each eleven is picked by the same exact solver as the Best XI page, in the shape you choose; swaps lock a player in and another out, exactly as on that page.'),
+           : [h('li', 'Each eleven uses the same exact solver as Best XI. A confirmed swap keeps the other ten players and updates any presets you accept in the preview.'),
             h('li', 'Batting value is spread over a typical innings by batting position. The best bowlers take the most overs, each within the format’s limit and near his usual workload; overs a side cannot cover go to part-timers at the rate occasional bowlers really concede.'),
             h('li', 'Short records are pulled towards what a player’s other cricket predicts, using transitions measured on players who played both. Those predictions beat an average-player assumption on debutants the fit never saw (see Method & data).'),
             h('li', 'The projection knows nothing about pitch, weather, toss, venue or form beyond each side’s years. Treat it as a well-informed argument, not a forecast.'),
@@ -881,8 +783,9 @@ export async function mount(root, route) {
   renderAll();
 
   return {
-    destroy() { dead = true; swapDialog?.close(); swapDialog?.remove(); swapDialog = null; },
+    destroy() { dead = true; swapDialog?.close(); swapDialog = null; },
     update(r) {
+      swapDialog?.close();
       if (r.query.get('a') == null) return;
       const next = { a: stateOf(r.query.get('a')), b: stateOf(r.query.get('b')), m: r.query.get('m') || st.m };
       if (queryString(next.a) === queryString(st.a) && queryString(next.b) === queryString(st.b) && next.m === st.m) return;
