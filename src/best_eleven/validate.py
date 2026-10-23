@@ -2,14 +2,16 @@
 
 1. Margins: innings totals rebuilt from deliveries must reproduce every
    official winning margin (runs, innings-and-runs, wickets).
-2. Careers: Cricsheet totals must agree with Wikipedia's career figures for
-   players whose whole career lies inside ball-by-ball coverage.
+2. Careers: Cricsheet totals, counted up to the date each infobox gives,
+   must agree with Wikipedia's career figures for players whose whole career
+   lies inside ball-by-ball coverage.
 3. Prediction: do opposition-adjusted ratings from one period predict a
    player's raw output in the next period better than raw figures do?
 """
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from pathlib import Path
 
 import numpy as np
@@ -49,52 +51,113 @@ def margin_check(wh_dir: Path) -> dict:
     }
 
 
-def career_check(model_dir: Path, wh_dir: Path, reference: Path) -> dict:
-    """Two views. Strict: men's Test players from sides that have never met
-    Afghanistan in a Test (Cricsheet withholds those matches), whose Wikipedia
-    figures were updated within 60 days of the data end; these must agree
-    exactly. Broad: every player whose career lies inside coverage, reported
-    for context (gaps there come from withheld matches and stale infoboxes)."""
+STAMP_FORMATS = ("%d %B %Y", "%d %b %Y", "%d %B, %Y", "%B %d, %Y", "%b %d, %Y", "%B %d %Y")
+FRESH_DAYS = 60
+
+
+def infobox_date(text: str) -> pd.Timestamp:
+    """The day an infobox states its figures as of ("4 October 2026", "August 9,
+    2025"), or NaT when it gives no full date: a month or a year alone cannot
+    say which matches the figures include."""
+    t = " ".join(str(text).split())
+    for f in STAMP_FORMATS:
+        try:
+            return pd.Timestamp(datetime.strptime(t, f))
+        except ValueError:
+            continue
+    return pd.NaT
+
+
+def match_totals(wh_dir: Path, scope: str) -> pd.DataFrame:
+    """One row per (player, match) in a scope: runs, wickets and the match's dates.
+    Summed over every match these equal the season aggregates' m, r and ww."""
+    m = pd.read_parquet(wh_dir / "matches.parquet", columns=["match_id", "scope", "start_date", "end_date"])
+    m = m[m["scope"] == scope]
+    ids = set(m["match_id"])
+    ap = pd.read_parquet(wh_dir / "appearances.parquet", columns=["match_id", "player"])
+    ap = ap[ap["match_id"].isin(ids)].drop_duplicates()
+    bat = pd.read_parquet(wh_dir / "batting.parquet", columns=["match_id", "player", "runs", "super_over"])
+    bat = bat[bat["match_id"].isin(ids) & (bat["super_over"] == 0)].groupby(["match_id", "player"])["runs"].sum()
+    bw = pd.read_parquet(wh_dir / "bowling.parquet", columns=["match_id", "player", "wickets", "super_over"])
+    bw = bw[bw["match_id"].isin(ids) & (bw["super_over"] == 0)].groupby(["match_id", "player"])["wickets"].sum()
+    out = ap.set_index(["match_id", "player"]).join(bat.astype("int64")).join(bw.astype("int64")).fillna(0).reset_index()
+    out = out.merge(m[["match_id", "start_date", "end_date"]], on="match_id")
+    out["start_date"], out["end_date"] = pd.to_datetime(out["start_date"]), pd.to_datetime(out["end_date"])
+    return out
+
+
+def career_check(model_dir: Path, wh_dir: Path, reference: Path, min_strict: int = 50) -> dict:
+    """Cricsheet career totals against Wikipedia infoboxes, counted like for
+    like: only matches that ended by the date the infobox gives for its figures.
+
+    Strict: men's Test players from sides that have never met Afghanistan in a
+    Test (Cricsheet withholds those matches), whose careers lie inside coverage
+    and whose infoboxes were updated within 60 days of the reference snapshot;
+    these must agree exactly. The set is fixed by the snapshot, so it does not
+    shrink as later matches arrive. Left out: infoboxes dated inside a match the
+    player was playing (part of it may be counted) or after the last Cricsheet
+    match (the infobox may hold matches Cricsheet has not published yet).
+    Broad: every player whose career lies inside coverage, reported for context
+    (gaps there come from withheld matches and stale infoboxes)."""
     path = reference / "players_wiki.csv"
     name = "Career totals vs Wikipedia"
     if not path.exists():
         return {"name": name, "passed": False, "summary": "players_wiki.csv missing"}
+    manifest = reference / "manifest.json"
+    fetched = json.loads(manifest.read_text(encoding="utf-8")).get("fetched_at", "") if manifest.exists() else ""
+    snapshot = pd.to_datetime(fetched, errors="coerce", utc=True)
+    if pd.isna(snapshot):
+        return {"name": name, "passed": False, "summary": "reference manifest gives no snapshot date (fetched_at)"}
+    snapshot = snapshot.tz_localize(None).normalize()
     wiki = pd.read_csv(path, dtype=str, keep_default_na=False)
     wiki = wiki[(wiki["cricsheet_id"] != "") & (wiki["career_json"] != "")].drop_duplicates("cricsheet_id")
-    wiki["stamp"] = pd.to_datetime(wiki["stats_as_of"], errors="coerce", dayfirst=True)
+    wiki["stamp"] = pd.to_datetime(wiki["stats_as_of"].map(infobox_date))
     players = pd.read_parquet(wh_dir / "players.parquet")[["player", "id"]]
-    data_end = pd.Timestamp(pd.read_parquet(wh_dir / "matches.parquet")["end_date"].max())
+    data_end = pd.Timestamp(pd.read_parquet(wh_dir / "matches.parquet", columns=["end_date"])["end_date"].max())
     frames = []
     for scope, (fmt, key) in INTL_FMT.items():
         s = pd.read_parquet(model_dir / "seasons" / f"{scope}.parquet")
         start = int(s["year"].min())
         nat = s.groupby(["player", "team"])["m"].sum().reset_index().sort_values("m").drop_duplicates("player", keep="last")
-        g = s.groupby("player").agg(first=("year", "min"), m=("m", "sum"), r=("r", "sum"), ww=("ww", "sum"))
+        g = s.groupby("player").agg(first=("year", "min"))
         g = g.join(nat.set_index("player")["team"].rename("nat"))
         g = g[g["first"] >= start + 3].join(players.set_index("player"))
-        g = g.merge(wiki[["cricsheet_id", "career_json", "stamp"]], left_on="id", right_on="cricsheet_id")
+        g = g.reset_index().merge(wiki[["cricsheet_id", "career_json", "stamp"]], left_on="id", right_on="cricsheet_id")
         c = g["career_json"].map(lambda x: json.loads(x).get(key) or {})
         g["wk_m"], g["wk_r"], g["wk_w"] = (c.map(lambda d: d.get("matches")), c.map(lambda d: d.get("runs") or 0),
                                            c.map(lambda d: d.get("wickets") or 0))
         g = g.dropna(subset=["wk_m"])
+        # Cricsheet totals up to each infobox's date (whole career where it gives none).
+        pm = match_totals(wh_dir, scope).merge(g[["player", "stamp"]], on="player")
+        dated = pm["stamp"].notna()
+        inside = pm[dated & (pm["start_date"] <= pm["stamp"]) & (pm["end_date"] > pm["stamp"])]["player"].unique()
+        pm = pm[~dated | (pm["end_date"] <= pm["stamp"])]
+        t = pm.groupby("player").agg(m=("match_id", "nunique"), r=("runs", "sum"), ww=("wickets", "sum"))
+        g = g.join(t, on="player").fillna({"m": 0, "r": 0, "ww": 0})
+        g["inside"] = g["player"].isin(inside)
         g["format"] = fmt
         frames.append(g)
     df = pd.concat(frames, ignore_index=True)
     exact = (df["m"] == df["wk_m"]) & (df["r"] == df["wk_r"]) & (df["ww"] == df["wk_w"])
-    strict = ((df["format"] == "Test") & df["nat"].isin(["Australia", "England", "South Africa", "Pakistan"])
-              & (df["stamp"] >= data_end - pd.Timedelta(days=60)))
+    fresh = (df["stamp"] >= snapshot - pd.Timedelta(days=FRESH_DAYS)) & (df["stamp"] <= min(snapshot, data_end))
+    candidates = (df["format"] == "Test") & df["nat"].isin(["Australia", "England", "South Africa", "Pakistan"]) & fresh
+    strict = candidates & ~df["inside"]
     broad = {fmt: {"players": int((df["format"] == fmt).sum()),
                    "exact": round(float(exact[df["format"] == fmt].mean()), 4),
                    "cricsheet_fewer": round(float((df["m"] < df["wk_m"])[df["format"] == fmt].mean()), 4),
                    "cricsheet_more": round(float((df["m"] > df["wk_m"])[df["format"] == fmt].mean()), 4)}
              for fmt in ("Test", "ODI", "T20I")}
     rate = float(exact[strict].mean()) if strict.any() else 0.0
-    return {"name": name, "passed": bool(strict.sum() >= 50 and rate >= 0.98),
-            "summary": (f"strict set: {int(strict.sum())} Test players, {rate:.1%} exact on matches, runs and wickets; "
-                        f"all players: exact {broad['Test']['exact']:.0%} Tests, {broad['ODI']['exact']:.0%} ODIs, "
-                        f"{broad['T20I']['exact']:.0%} T20Is (Afghanistan matches withheld, infoboxes lag)"),
-            "strict": {"players": int(strict.sum()), "exact": round(rate, 4),
-                       "mismatches": df.loc[strict & ~exact, ["id", "m", "wk_m", "r", "wk_r", "ww", "wk_w"]].head(20).to_dict("records")},
+    return {"name": name, "passed": bool(strict.sum() >= min_strict and rate >= 0.98),
+            "summary": (f"strict set: {int(strict.sum())} Test players, {rate:.1%} exact on matches, runs and wickets "
+                        f"as of each infobox's date; all players: exact {broad['Test']['exact']:.0%} Tests, "
+                        f"{broad['ODI']['exact']:.0%} ODIs, {broad['T20I']['exact']:.0%} T20Is "
+                        f"(Afghanistan matches withheld, infoboxes lag)"),
+            "snapshot": str(snapshot.date()), "data_end": str(data_end.date()),
+            "strict": {"players": int(strict.sum()), "exact": round(rate, 4), "min_players": min_strict,
+                       "left_out_inside_a_match": int((candidates & df["inside"]).sum()),
+                       "mismatches": df.loc[strict & ~exact, ["id", "stamp", "m", "wk_m", "r", "wk_r", "ww", "wk_w"]]
+                                       .head(20).astype({"stamp": str}).to_dict("records")},
             "broad": broad}
 
 

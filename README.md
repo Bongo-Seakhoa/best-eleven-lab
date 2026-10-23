@@ -8,7 +8,7 @@ Pick a cricket Best XI for any national side, franchise league or era, from ever
 
 - **Best XI.** Choose men's or women's Tests, ODIs or T20Is, or a league (IPL, SA20, BBL, PSL, CPL, WPL, WBBL and nine more). Pick a team or a World XI, a year window, and who is available: the current squad, active players or everyone. Then weigh quality, legacy, experience and leadership as you see fit. An exact solver returns the best eleven for that composition, with the captain, keeper, next in line, "why not X?" and a robustness check.
 - **All eras.** A second evidence base built from complete career records (Tests from 1877, ODIs from 1971), adjusted to each decade's average, so Bradman, Barry Richards or Graeme Pollock can sit alongside today's players.
-- **Player profiles** for 6,694 cricketers. Each shows ratings, season trends, how the player fares against each bowling type or batting type, by phase, how they get out (or take wickets) compared with their peers, the bowlers or batters they meet most, and a field plan built from their measured rates.
+- **Player profiles** for 6,707 cricketers. Each shows ratings, season trends, how the player fares against each bowling type or batting type, by phase, how they get out (or take wickets) compared with their peers, the bowlers or batters they meet most, and a field plan built from their measured rates.
 - **Player database** that knows who is actually available: current national and franchise squads, reported retirements and come-backs, captaincy and vice-captaincy, batting hand, bowling style and career totals.
 - **Captains** compared side by side from formal captaincy records. Every captain with a Cricsheet id or a Wikipedia article links to a page: a full profile, or a career record for those who played before ball-by-ball coverage.
 - **Pages remember where you were.** Each of Best XI, Players, Captains and XI vs XI keeps its last state in your browser, the back and forward buttons return to it, and links to the pages you used last point left or right the way they sit in the menu.
@@ -18,7 +18,7 @@ Pick a cricket Best XI for any national side, franchise league or era, from ever
 ## How it works
 
 ```
-Cricsheet all_json.zip ─► ingest ─► Parquet warehouse (23,080 matches, 11.7 m deliveries)
+Cricsheet all_json.zip ─► ingest ─► Parquet warehouse (23,132 matches, 11.7 m deliveries)
                                          │
 Wikipedia / Wikidata ─► enrich ─► data/reference (players, squads, captaincy, careers, team images)
                                          │
@@ -38,8 +38,8 @@ Every limited-overs ball is valued by how much it changes the batting side's exp
 
 | Check | Latest result |
 |---|---|
-| Winning margins rebuilt from deliveries | 99.96% of 9,985 run margins and 99.99% of 10,327 wicket margins exact |
-| Career totals vs Wikipedia (strict set: careers wholly inside coverage, fresh infoboxes) | 124 Test players, 100% exact on matches, runs and wickets |
+| Winning margins rebuilt from deliveries | 99.96% of 10,015 run margins and 99.99% of 10,364 wicket margins exact |
+| Career totals vs Wikipedia (strict set: careers wholly inside coverage, infoboxes fresh at the snapshot, Cricsheet counted to each infobox's date) | 93 Test players, 100% exact on matches, runs and wickets |
 | Earlier rating vs later output (Spearman, batters) | adjusted beats raw in Tests 0.64 vs 0.60, ODIs 0.45 vs 0.40, T20Is 0.35 vs 0.31, IPL 0.40 vs 0.35 |
 | Pace/spin classifier (5-fold CV) | 89% accuracy, AUC 0.965; labels kept only above 0.85 confidence (94% accurate) |
 | Debut priors on 2019–26 debutants (fitted before 2019) | Beat the old average-player prior in all ten judged formats and disciplines, e.g. men's T20I batting error 0.197 vs 0.329, women's T20I batting 0.303 vs 0.812 |

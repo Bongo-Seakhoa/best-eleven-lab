@@ -1,16 +1,18 @@
 # Assurance
 
-What has been checked, how, and what remains open. Status as of 9 October 2026.
+What has been checked, how, and what remains open. Status as of 9 October 2026; the career check and reference snapshots were refreshed on 23 October 2026.
 
 ## Checks that run on every build
 
 [src/best_eleven/validate.py](../src/best_eleven/validate.py) runs inside `best-eleven build`. The Pages workflow does not publish when a check fails, so the live site keeps the last good build.
 
+The weekly build of 19 October 2026 failed the career check: it then compared whole careers with infoboxes frozen at the 9 October snapshot, so the Australia v South Africa Test of 9–13 October put 20 players one match ahead of Wikipedia. The check now counts like for like (below). Its freshness window had the same flaw: measured from the latest match, it would have emptied the strict set within two months of any snapshot.
+
 | Check | Method | Result (Oct 2026) |
 |---|---|---|
 | Ingest accounting | Rebuild each innings total from deliveries; compare with every official winning margin by runs (including innings victories) and by wickets | 9,981 of 9,985 run margins and 10,326 of 10,327 wicket margins exact. The five misses are associate matches whose source totals disagree with their own result. |
-| Identity and completeness | Compare Cricsheet career totals with Wikipedia infoboxes for men's Test players whose careers lie wholly inside coverage, from sides that have never met Afghanistan in a Test, with infoboxes updated within 60 days | 124 players, 100% exact on matches, runs and wickets |
-| Broad completeness (context) | Same comparison for every player | Exact for 70% of Test, 37% of ODI and 39% of T20I players. Where Cricsheet has fewer matches, the misses concentrate in sides that play Afghanistan (Cricsheet withholds those matches). Where it has more, women's infoboxes last updated in 2023–24 explain it. |
+| Identity and completeness | Compare Cricsheet career totals with Wikipedia infoboxes for men's Test players whose careers lie wholly inside coverage, from sides that have never met Afghanistan in a Test, with infoboxes updated during the 60 days up to the reference snapshot. Cricsheet is counted only up to the date each infobox gives for its figures, so matches played after the snapshot cannot fail the check and the set does not shrink as data arrives. Left out: infoboxes dated inside a match the player was playing, or after the last Cricsheet match. Fails below 50 players or 98% exact | 93 players, 100% exact on matches, runs and wickets (data to 14 Oct 2026) |
+| Broad completeness (context) | Same comparison for every player, counted to each infobox's date where it gives a full one | Exact for 68% of Test, 41% of ODI and 42% of T20I players. Where Cricsheet has fewer matches, the misses concentrate in sides that play Afghanistan (Cricsheet withholds those matches). Cricsheet has more for 1–4% of players; before counting to the infobox date it was 8–17%, mostly matches played after an infobox was last updated. |
 | Does the adjustment help? | Rating from 2016–21 vs raw output per ball in 2022–26, batters with 300+ balls in both (Spearman) | Adjusted beats raw value per ball in Tests (0.64 vs 0.60), ODIs (0.45 vs 0.40), T20Is (0.35 vs 0.31) and the IPL (0.40 vs 0.35). In T20Is, plain strike rate (0.44) beats both. |
 | Bowling-type classifier | 5-fold cross-validation on 3,210 bowlers with Wikipedia styles | 89% accuracy, AUC 0.965; at the 0.85 threshold, 88% of bowlers labelled with 94% accuracy |
 | Selector exactness | 120 random instances (caps, locks, exclusions) solved by the browser engine and by SciPy's MILP | Identical optima |
@@ -31,6 +33,8 @@ What has been checked, how, and what remains open. Status as of 9 October 2026.
 
 ## Known gaps
 
+- The 23 October reference refresh preserves two Wikipedia infobox defects: [Neil Brand's T20 figures](https://en.wikipedia.org/w/index.php?title=Neil_Brand_(cricketer)&oldid=1380592991) give 8 matches but 589 runs at 20.31, implying about 29 dismissals; [Marcus Bean's table](https://en.wikipedia.org/w/index.php?title=Marcus_Bean_(cricketer)&oldid=1380850466) labels two columns List A. These affect biography career tables; the selector's ratings come from Cricsheet.
+- Existing identity conflicts remain unresolved: Margaret Ngoche's career-list and biography rows carry different Cricsheet IDs, and ID `efcb778e` appears for both sides in T20I match `1229824`. The reference refresh does not infer replacements for these source identities.
 - Cricsheet withholds every match involving Afghanistan's men (379 matches at the October archive). Afghanistan's men have no ball-by-ball ratings, and their opponents' records are short by those games.
 - Men's ball-by-ball coverage starts around 2002. Earlier careers enter only through the all-eras mode, which has no batting positions, strike rates or opposition adjustment.
 - Field plans have no spatial data behind the named positions.
