@@ -21,6 +21,8 @@ The weekly build of 19 October 2026 failed the career check: it then compared wh
 
 ## One-off verification (October 2026)
 
+**Download recovery (23 October).** Network-free synthetic HTTP, ZIP and CSV cases check invalid archive and partial-stream recovery, CRC and length failures, bounded exhaustion preserving source and metadata, temporary versus permanent HTTP errors, bounded `Retry-After`, cached 304 integrity, unconditional recovery and force downloads, register format checks, response closure and temporary-file cleanup. Local write failures are fatal. New data is verified and hashed before replacing a source; exhausted retries remain build failures rather than silently reusing old data as a fresh download.
+
 **Swap freeze regression (23 October).** Australia's active 2023–26 T20I side froze when Matt Renshaw replaced Cameron Green. The captured candidate scores now form a bounded regression against SciPy's MILP. Lock incentives scale with the possible utility gap, floating-point residuals have a stable tolerance, and cyclic paths report an error. Leaving XI vs XI also removes its open swap dialog.
 
 **Manual player selection (23 October).** Captured Australia Test, T20I and career subsets exercise the browser's shared manual-selection engine without network access. Regression checks cover Maddinson's current Test record, labelled older T20I evidence, season cutoffs, unchanged recommendation references, preserving ten players, repeated swaps, requested versus assigned roles, preview/commit/link equivalence, historical custom shapes, and minimal cap changes. The browser flow is checked on both selection pages, including explicit preset confirmation and dialog cleanup. Manual choices never invent a missing batting, bowling or keeping record.
