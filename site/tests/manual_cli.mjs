@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import assert from 'node:assert/strict';
 import { buildPool } from '../assets/js/engine/select.js';
-import { manualPoolFor, previewSwap } from '../assets/js/engine/manual.js';
+import { createSwapPreview, manualPoolFor, previewSwap } from '../assets/js/engine/manual.js';
 import { historicPool, HISTORIC_TEMPLATE } from '../assets/js/engine/historic.js';
 import { defaults, engineSettings, selectFor, toQuery, fromQuery, idString, idList } from '../assets/js/xistate.js';
 
@@ -41,13 +41,19 @@ const base = selectFor(st, T), opener = base.xi.find((x) => x.type === 'opener')
 swap(st, T, base, opener, madd);
 const role = swap(st, T, base, opener, madd, 'batter');
 assert.equal(role.requestedRole, 'batter');
+const previewPlayer = createSwapPreview(st, T, base);
+assert.deepEqual(previewPlayer(opener.player.id, madd, 'batter'), role);
+const cachedShape = previewPlayer(base.xi.find((x) => x.type === 'pace').player.id, madd);
 const shapeChange = swap(st, T, base, base.xi.find((x) => x.type === 'pace'), madd);
+assert.deepEqual(cachedShape, shapeChange);
 assert.ok(shapeChange.changes.length);
 assert.ok(shapeChange.warnings.some((w) => w.includes('preset')));
 const repeated = swap(shapeChange.state, T, shapeChange.result,
   shapeChange.result.xi.find((x) => x.player.id === ID),
   manualPoolFor(shapeChange.state, T).find((p) => p.id === base.xi.find((x) => x.type === 'pace').player.id));
 assert.deepEqual(ids(repeated.result), ids(base));
+const previewNextXI = createSwapPreview(shapeChange.state, T, shapeChange.result);
+assert.deepEqual(previewNextXI(repeated.outgoing.player.id, repeated.incoming), repeated);
 
 const ts = defaults({ team: 'Australia', f: 'T20I', from: 2023, to: 2026 });
 const old = manualPoolFor(ts, S).find((p) => p.id === ID);

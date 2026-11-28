@@ -2,7 +2,7 @@ import { h, clear, fmt, initials } from './dom.js';
 import { icon, ROLE_ICON } from './icons.js';
 import { teamLabel } from './teams.js';
 import { SLOT_TYPES, VIRTUAL_SLOTS } from '../engine/metrics.js';
-import { manualPoolFor, preferredRole, previewSwap } from '../engine/manual.js';
+import { createSwapPreview, manualPoolFor, preferredRole } from '../engine/manual.js';
 import { compositionText, queryString } from '../xistate.js';
 
 const signed = (n) => fmt.signed(n, 1);
@@ -11,6 +11,7 @@ const roles = (p) => VIRTUAL_SLOTS.any.filter((r) => Number.isFinite(p.util[r]))
 /** Shared, transactional player picker for Best XI and either side of XI vs XI. */
 export function playerPicker({ state, evidence, result, outgoingId, incomingId, getState, apply, projection, editPresets, title }) {
   const signature = queryString(state), snapshot = { ...state };
+  const previewPlayer = createSwapPreview(snapshot, evidence, result);
   let closed = false, token = 0, selected = null, preview = null, chosenRole = null;
   let query = '', roleFilter = '', recommendations = false, limit = 40;
   let focusPreview = false;
@@ -96,7 +97,8 @@ export function playerPicker({ state, evidence, result, outgoingId, incomingId, 
     try {
       // Yield once so rapid choices and route changes can invalidate old previews.
       await Promise.resolve();
-      const p = previewSwap(snapshot, evidence, result, outgoingId, selected, chosenRole);
+      if (closed || currentToken !== token) return;
+      const p = previewPlayer(outgoingId, selected, chosenRole);
       const extra = projection ? await projection(p.result) : [];
       if (closed || currentToken !== token) return;
       preview = p;
