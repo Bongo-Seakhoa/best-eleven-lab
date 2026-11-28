@@ -67,7 +67,7 @@ pytest -q
 ## Automation
 
 - **Tests** run on every push: Python, plus a parity check of the browser solver against SciPy's MILP.
-- **Build and publish the site** runs on every push to `main` and every Monday. It downloads Cricsheet's latest archive, rebuilds everything, validates, and deploys to GitHub Pages.
+- **Build and publish the site** runs every Monday, on pushes to `main`, and on demand. A scheduled run rebuilds and deploys only when verified Cricsheet or build inputs differ from the live site's recorded inputs, or when the record is unavailable. Pushes and manual runs always rebuild. All deployments require the full validation checks.
 - Downloads retry temporary network/server failures and invalid source files up to three times, waiting 1 then 2 seconds. Short `Retry-After` instructions are respected; longer waits are reported instead of retrying early. Failed downloads and verification never replace the previous source files or report a successful refresh.
 - **Refresh the player database** is manual. It re-reads Wikipedia and Wikidata and opens a pull request, so squad, retirement and captaincy changes are reviewed before they reach the site.
 

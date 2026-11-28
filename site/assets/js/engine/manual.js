@@ -28,8 +28,22 @@ export function preferredRole(player, outgoing) {
   return Number.isFinite(player.util[outgoing.type]) ? outgoing.type : player.pick.any;
 }
 
-/** Preview is pure: state is only applied by the view after explicit confirmation. */
+/** One preview session owns the same settings, evidence and original eleven. */
+export function createSwapPreview(st, evidence, current) {
+  let baseline;
+  // Lock the original XI so the comparison uses the same evidence setting.
+  const getBaseline = () => baseline ??= selectFor({
+    ...st, lock: idString(current.xi.map((x) => x.player.id)),
+  }, evidence);
+  return (outgoingId, incoming, roleOverride = null) =>
+    preview(st, evidence, current, outgoingId, incoming, roleOverride, getBaseline);
+}
+
 export function previewSwap(st, evidence, current, outgoingId, incoming, roleOverride = null) {
+  return createSwapPreview(st, evidence, current)(outgoingId, incoming, roleOverride);
+}
+
+function preview(st, evidence, current, outgoingId, incoming, roleOverride, getBaseline) {
   const outgoing = current.xi.find((x) => x.player.id === outgoingId);
   if (!outgoing || current.xi.some((x) => x.player.id === incoming.id)) throw new Error('Choose a player outside this eleven.');
   const role = roleOverride ?? preferredRole(incoming, outgoing);
@@ -81,9 +95,7 @@ export function previewSwap(st, evidence, current, outgoingId, incoming, roleOve
   if (selected.size !== 11 || proposed.some((x) => !selected.has(x.player.id))) {
     throw new Error('This swap could not preserve the other ten players.');
   }
-  // A relaxed recommendation may use a different reference cohort. Re-score the
-  // current eleven at the same evidence setting before displaying a difference.
-  const baseline = selectFor({ ...st, lock: idString(current.xi.map((x) => x.player.id)) }, evidence);
+  const baseline = getBaseline();
   const delta = baseline.error ? null : result.total - baseline.total;
   const actualRole = result.xi.find((x) => x.player.id === incoming.id).type;
   return { state: next, result, outgoing, incoming, role: actualRole, requestedRole: role, warnings, changes, delta, slots: result.slots ?? shape };
